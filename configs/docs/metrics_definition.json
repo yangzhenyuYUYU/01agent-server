@@ -1,0 +1,280 @@
+{
+  "metrics": [
+    {
+      "dimension": "1. 核心营收",
+      "dimension_en": "Core Revenue",
+      "metrics": [
+        {
+          "name": "MRR (月经常性收入)",
+          "name_en": "Monthly Recurring Revenue",
+          "key": "revenue_mrr",
+          "definition": "当前生效中所有订阅用户的月费总和。(不含单次充值,仅计算订阅)",
+          "formula": "SUM(所有生效中订阅的月费)",
+          "data_source": "支付系统(Stripe/微信/支付宝回调)",
+          "priority": "P0",
+          "database_fields": [
+            "subscription_records.monthly_fee",
+            "subscription_records.status",
+            "subscription_records.start_date",
+            "subscription_records.end_date"
+          ]
+        },
+        {
+          "name": "新增付费用户数",
+          "name_en": "New Paying Users",
+          "key": "new_paying_users",
+          "definition": "当日首次完成付费(订阅或充值)的用户数。",
+          "formula": "COUNT(DISTINCT 当日首次付费的用户ID)",
+          "data_source": "支付系统 pay_success 事件",
+          "priority": "P0",
+          "database_fields": [
+            "trades.user_id",
+            "trades.paid_at",
+            "trades.payment_status",
+            "trades.trade_type"
+          ]
+        },
+        {
+          "name": "付费转化率",
+          "name_en": "Payment Conversion Rate",
+          "key": "payment_conversion_rate",
+          "definition": "当日新增付费用户数 / 当日新增注册用户数",
+          "formula": "(当日新增付费用户数 / 当日新增注册用户数) * 100%",
+          "data_source": "用户表+订单表",
+          "priority": "P0",
+          "database_fields": [
+            "users.registration_date",
+            "trades.paid_at",
+            "trades.payment_status"
+          ]
+        }
+      ]
+    },
+    {
+      "dimension": "2. 用户活跃",
+      "dimension_en": "User Activity",
+      "metrics": [
+        {
+          "name": "WAU (周活跃用户)",
+          "name_en": "Weekly Active Users",
+          "key": "active_users_weekly",
+          "definition": "过去7天内,至少完成过1次有效生成的用户数。(注意:仅登录不算活跃)",
+          "formula": "COUNT(DISTINCT 过去7天内有task_generate_success的用户ID)",
+          "data_source": "埋点事件: task_generate_success",
+          "priority": "P0",
+          "database_fields": [
+            "task_generate_log.user_id",
+            "task_generate_log.status",
+            "task_generate_log.created_at"
+          ]
+        },
+        {
+          "name": "DAU (日活跃用户)",
+          "name_en": "Daily Active Users",
+          "key": "active_users_daily",
+          "definition": "当日完成过至少1次有效生成的去重用户数。",
+          "formula": "COUNT(DISTINCT 当日有task_generate_success的用户ID)",
+          "data_source": "埋点事件: task_generate_success",
+          "priority": "P1",
+          "database_fields": [
+            "task_generate_log.user_id",
+            "task_generate_log.status",
+            "task_generate_log.created_at"
+          ]
+        },
+        {
+          "name": "核心动作执行次数",
+          "name_en": "Core Action Execution Count",
+          "key": "total_generations",
+          "definition": "用户点击"生成"并成功返回结果的总次数。(可细分为:图文生成、纯文本生成)",
+          "formula": "COUNT(状态=成功的生成任务)",
+          "data_source": "后端日志: API调用成功计数",
+          "priority": "P0",
+          "database_fields": [
+            "task_generate_log.id",
+            "task_generate_log.status",
+            "task_generate_log.task_type",
+            "task_generate_log.created_at"
+          ]
+        }
+      ]
+    },
+    {
+      "dimension": "3. 产品价值",
+      "dimension_en": "Product Value",
+      "metrics": [
+        {
+          "name": "生成结果采纳率",
+          "name_en": "Generation Result Adoption Rate",
+          "key": "adoption_rate",
+          "definition": "用户点击复制、下载、保存的次数 / 总生成次数",
+          "formula": "(用户点击复制、下载、保存的次数 / 总生成次数) * 100%",
+          "data_source": "前端埋点: result_copy, result_download",
+          "priority": "P0",
+          "database_fields": [
+            "user_action_log.action_type",
+            "user_action_log.task_id",
+            "task_generate_log.id"
+          ]
+        },
+        {
+          "name": "人均生成任务数",
+          "name_en": "Average Tasks Generated Per User",
+          "key": "avg_tasks_per_user",
+          "definition": "当日总生成次数 / DAU。(监测产品是"玩具"还是"工具")",
+          "formula": "当日总生成次数 / DAU",
+          "data_source": "计算字段",
+          "priority": "P1",
+          "database_fields": [
+            "task_generate_log.created_at",
+            "task_generate_log.user_id"
+          ]
+        }
+      ]
+    },
+    {
+      "dimension": "4. 留存与生命周期",
+      "dimension_en": "Retention & Lifecycle",
+      "metrics": [
+        {
+          "name": "次日留存率",
+          "name_en": "Day 1 Retention Rate",
+          "key": "retention_day_1",
+          "definition": "昨日注册且今日再次访问并操作的用户数 / 昨日新增注册数",
+          "formula": "(昨日注册且今日再次访问并操作的用户数 / 昨日新增注册数) * 100%",
+          "data_source": "用户行为日志",
+          "priority": "P0",
+          "database_fields": [
+            "users.registration_date",
+            "task_generate_log.user_id",
+            "task_generate_log.created_at"
+          ]
+        },
+        {
+          "name": "周留存率",
+          "name_en": "Weekly Retention Rate",
+          "key": "retention_week_1",
+          "definition": "上周注册且本周再次访问并操作的用户数 / 上周新增注册数",
+          "formula": "(上周注册且本周再次访问并操作的用户数 / 上周新增注册数) * 100%",
+          "data_source": "用户行为日志",
+          "priority": "P1",
+          "database_fields": [
+            "users.registration_date",
+            "task_generate_log.user_id",
+            "task_generate_log.created_at"
+          ]
+        }
+      ]
+    },
+    {
+      "dimension": "5. 成本监控",
+      "dimension_en": "Cost Monitoring",
+      "metrics": [
+        {
+          "name": "单用户 Token 消耗",
+          "name_en": "Token Consumption Per User",
+          "key": "cost_per_user_token",
+          "definition": "单个用户当日所有任务消耗的 Token 总量(或折算金额)。",
+          "formula": "SUM(用户当日所有任务的token_consumed)",
+          "data_source": "后端日志: LLM API 回调 Token 数",
+          "priority": "P0",
+          "database_fields": [
+            "task_generate_log.user_id",
+            "task_generate_log.token_consumed",
+            "task_generate_log.created_at"
+          ]
+        },
+        {
+          "name": "任务失败率",
+          "name_en": "Task Failure Rate",
+          "key": "task_error_rate",
+          "definition": "生成失败或报错的请求数 / 总请求数",
+          "formula": "(生成失败或报错的请求数 / 总请求数) * 100%",
+          "data_source": "后端异常日志(Error Logs)",
+          "priority": "P0",
+          "database_fields": [
+            "task_generate_log.status",
+            "task_generate_log.error_message",
+            "task_generate_log.created_at"
+          ]
+        }
+      ]
+    },
+    {
+      "dimension": "6. 流量来源",
+      "dimension_en": "Traffic Source",
+      "metrics": [
+        {
+          "name": "注册来源分布",
+          "name_en": "Registration Source Distribution",
+          "key": "user_source_channel",
+          "definition": "统计 utm_source 字段分布(如:Bilibili, Xiaohongshu, Direct).",
+          "formula": "GROUP BY users.utm_source",
+          "data_source": "注册接口记录 Referer 或 UTM 参数",
+          "priority": "P1",
+          "database_fields": [
+            "users.utm_source",
+            "users.registration_date"
+          ]
+        }
+      ]
+    }
+  ],
+  "required_tables": {
+    "task_generate_log": {
+      "description": "任务生成记录表（需要创建）",
+      "fields": [
+        "id",
+        "user_id",
+        "task_type",
+        "status",
+        "token_consumed",
+        "error_message",
+        "created_at"
+      ]
+    },
+    "user_action_log": {
+      "description": "用户行为记录表（需要创建）",
+      "fields": [
+        "id",
+        "user_id",
+        "action_type",
+        "task_id",
+        "created_at"
+      ]
+    },
+    "subscription_records": {
+      "description": "订阅记录表（需要创建）",
+      "fields": [
+        "id",
+        "user_id",
+        "subscription_type",
+        "monthly_fee",
+        "start_date",
+        "end_date",
+        "status"
+      ]
+    }
+  },
+  "existing_tables": {
+    "users": {
+      "relevant_fields": [
+        "user_id",
+        "utm_source",
+        "registration_date",
+        "last_login_time"
+      ]
+    },
+    "trades": {
+      "relevant_fields": [
+        "id",
+        "user_id",
+        "amount",
+        "payment_status",
+        "paid_at",
+        "trade_type"
+      ]
+    }
+  }
+}
+
