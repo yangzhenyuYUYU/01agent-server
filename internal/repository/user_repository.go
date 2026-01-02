@@ -117,3 +117,54 @@ func (r *UserRepository) IsUsernameExists(username string) (bool, error) {
 	err := r.db.Model(&models.User{}).Where("username = ?", username).Count(&count).Error
 	return count > 0, err
 }
+
+// GetByPhone 根据手机号获取用户
+func (r *UserRepository) GetByPhone(phone string) (*models.User, error) {
+	var user models.User
+	err := r.db.Where("phone = ?", phone).First(&user).Error
+	if err != nil {
+		return nil, err
+	}
+	return &user, nil
+}
+
+// GetByOpenID 根据OpenID获取用户
+func (r *UserRepository) GetByOpenID(openID string) (*models.User, error) {
+	var user models.User
+	err := r.db.Where("openid = ?", openID).First(&user).Error
+	if err != nil {
+		return nil, err
+	}
+	return &user, nil
+}
+
+// IsPhoneExists 检查手机号是否存在
+func (r *UserRepository) IsPhoneExists(phone string) (bool, error) {
+	var count int64
+	err := r.db.Model(&models.User{}).Where("phone = ?", phone).Count(&count).Error
+	return count > 0, err
+}
+
+// IsOpenIDExists 检查OpenID是否存在
+func (r *UserRepository) IsOpenIDExists(openID string) (bool, error) {
+	var count int64
+	err := r.db.Model(&models.User{}).Where("openid = ?", openID).Count(&count).Error
+	return count > 0, err
+}
+
+// UpdateCredits 更新用户积分
+func (r *UserRepository) UpdateCredits(userID string, credits int) error {
+	return r.db.Model(&models.User{}).Where("user_id = ?", userID).Update("credits", credits).Error
+}
+
+// AddCredits 增加用户积分
+func (r *UserRepository) AddCredits(userID string, amount int) error {
+	return r.db.Model(&models.User{}).Where("user_id = ?", userID).
+		Update("credits", gorm.Expr("credits + ?", amount)).Error
+}
+
+// DeductCredits 扣减用户积分
+func (r *UserRepository) DeductCredits(userID string, amount int) error {
+	return r.db.Model(&models.User{}).Where("user_id = ? AND credits >= ?", userID, amount).
+		Update("credits", gorm.Expr("credits - ?", amount)).Error
+}

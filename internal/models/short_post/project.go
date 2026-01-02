@@ -1,7 +1,9 @@
-package models
+package short_post
 
 import (
 	"time"
+
+	"gin_web/internal/models"
 )
 
 // ProjectStatus 工程状态枚举
@@ -64,7 +66,7 @@ type ShortPostProject struct {
 	SavedAt     *time.Time    `json:"saved_at" gorm:"column:saved_at" description:"最后保存时间"`
 
 	// 关联关系
-	User *User `json:"user,omitempty" gorm:"-"`
+	User *models.User `json:"user,omitempty" gorm:"-"`
 }
 
 // ShortPostProjectContent 短图文工程内容模型（子表 - 存储JSON数据）
@@ -112,7 +114,7 @@ type ShortPostExportRecord struct {
 	CreatedAt    time.Time    `json:"created_at" gorm:"column:created_at;autoCreateTime;index" description:"创建时间"`
 
 	// 关联关系
-	User *User `json:"user,omitempty" gorm:"-"`
+	User *models.User `json:"user,omitempty" gorm:"-"`
 }
 
 // 表名设置
@@ -131,4 +133,3 @@ func (ShortPostProjectCopywriting) TableName() string {
 func (ShortPostExportRecord) TableName() string {
 	return "short_post_export_records"
 }
-

@@ -161,6 +161,46 @@ func Float64Ptr(f float64) *float64 {
 	return &f
 }
 
+// IntPtr 返回int指针
+func IntPtr(i int) *int {
+	return &i
+}
+
+// Int64Ptr 返回int64指针
+func Int64Ptr(i int64) *int64 {
+	return &i
+}
+
+// BoolPtr 返回bool指针
+func BoolPtr(b bool) *bool {
+	return &b
+}
+
+// Split 分割字符串（避免引入strings包时的循环依赖）
+func Split(s, sep string) []string {
+	if sep == "" {
+		return []string{s}
+	}
+
+	var result []string
+	for {
+		idx := -1
+		for i := 0; i <= len(s)-len(sep); i++ {
+			if s[i:i+len(sep)] == sep {
+				idx = i
+				break
+			}
+		}
+		if idx == -1 {
+			result = append(result, s)
+			break
+		}
+		result = append(result, s[:idx])
+		s = s[idx+len(sep):]
+	}
+	return result
+}
+
 // GetTokenExpiryTime 获取token的过期时间（不验证token有效性，仅解析）
 func GetTokenExpiryTime(tokenString string) (*time.Time, error) {
 	// 不验证签名，仅解析claims

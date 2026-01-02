@@ -169,6 +169,139 @@ func (h *UserHandler) addDetailedInfo(info gin.H, user *models.User) {
 	}
 }
 
+// UpdateUserInfo 更新用户信息
+func (h *UserHandler) UpdateUserInfo(c *gin.Context) {
+	userID, exists := middleware.GetCurrentUserID(c)
+	if !exists {
+		middleware.HandleError(c, middleware.NewBusinessError(401, "未授权访问"))
+		return
+	}
+
+	var req models.UserUpdateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(400, "参数错误: "+err.Error()))
+		return
+	}
+
+	// 调用服务层更新
+	user, err := h.userService.Update(userID, &req)
+	if err != nil {
+		repository.Errorf("UpdateUserInfo failed: %v", err)
+		if err.Error() == "user not found" {
+			middleware.HandleError(c, middleware.NewBusinessError(404, "用户不存在"))
+			return
+		}
+		if err.Error() == "email already exists" {
+			middleware.HandleError(c, middleware.NewBusinessError(400, "邮箱已被使用"))
+			return
+		}
+		middleware.HandleError(c, middleware.NewBusinessError(500, "更新失败: "+err.Error()))
+		return
+	}
+
+	// 构建响应
+	response := gin.H{
+		"user_id":  user.UserID,
+		"username": user.Username,
+		"email":    user.Email,
+		"nickname": user.Nickname,
+		"avatar":   user.Avatar,
+		"phone":    user.Phone,
+		"message":  "更新成功",
+	}
+
+	middleware.Success(c, "更新成功", response)
+}
+
+// GetUserParameters 获取用户参数配置
+func (h *UserHandler) GetUserParameters(c *gin.Context) {
+	userID, exists := middleware.GetCurrentUserID(c)
+	if !exists {
+		middleware.HandleError(c, middleware.NewBusinessError(401, "未授权访问"))
+		return
+	}
+
+	params, err := h.userService.GetUserParameters(userID)
+	if err != nil {
+		repository.Errorf("GetUserParameters failed: %v", err)
+		middleware.HandleError(c, middleware.NewBusinessError(500, "获取用户参数失败: "+err.Error()))
+		return
+	}
+
+	// 构建响应
+	response := gin.H{
+		"enable_head_info":      params.EnableHeadInfo,
+		"enable_knowledge_base": params.EnableKnowledgeBase,
+		"default_theme":         params.DefaultTheme,
+		"is_wechat_authorized":  params.IsWechatAuthorized,
+		"has_auth_reminded":     params.HasAuthReminded,
+		"is_gzh_bind":           params.IsGzhBind,
+		"publish_target":        params.PublishTarget,
+	}
+
+	middleware.Success(c, "获取用户参数成功", response)
+}
+
+// UpdateUserParameters 更新用户参数配置
+func (h *UserHandler) UpdateUserParameters(c *gin.Context) {
+	userID, exists := middleware.GetCurrentUserID(c)
+	if !exists {
+		middleware.HandleError(c, middleware.NewBusinessError(401, "未授权访问"))
+		return
+	}
+
+	var req models.UserParameters
+	if err := c.ShouldBindJSON(&req); err != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(400, "参数错误: "+err.Error()))
+		return
+	}
+
+	// 调用服务层更新
+	if err := h.userService.UpdateUserParameters(userID, &req); err != nil {
+		repository.Errorf("UpdateUserParameters failed: %v", err)
+		middleware.HandleError(c, middleware.NewBusinessError(500, "更新用户参数失败: "+err.Error()))
+		return
+	}
+
+	middleware.Success(c, "更新用户参数成功", gin.H{
+		"message": "更新成功",
+	})
+}
+
+// GetUserSessions 获取用户活跃会话
+func (h *UserHandler) GetUserSessions(c *gin.Context) {
+	userID, exists := middleware.GetCurrentUserID(c)
+	if !exists {
+		middleware.HandleError(c, middleware.NewBusinessError(401, "未授权访问"))
+		return
+	}
+
+	sessions, err := h.userService.GetActiveSessions(userID)
+	if err != nil {
+		repository.Errorf("GetUserSessions failed: %v", err)
+		middleware.HandleError(c, middleware.NewBusinessError(500, "获取会话列表失败: "+err.Error()))
+		return
+	}
+
+	// 构建响应
+	var sessionList []gin.H
+	for _, session := range sessions {
+		sessionList = append(sessionList, gin.H{
+			"id":         session.ID,
+			"ip_address": session.IPAddress,
+			"login_time": session.LoginTime.Format("2006-01-02T15:04:05Z07:00"),
+			"expires_at": session.ExpiresAt.Format("2006-01-02T15:04:05Z07:00"),
+			"is_active":  session.IsActive,
+			"login_type": session.LoginType,
+		})
+	}
+
+	middleware.Success(c, "获取会话列表成功", gin.H{
+		"sessions": sessionList,
+		"count":    len(sessionList),
+	})
+}
+
 // SetupUserRoutes 设置用户路由
 func SetupUserRoutes(r *gin.Engine, userHandler *UserHandler) {
 	// 公开路由
@@ -179,11 +312,19 @@ func SetupUserRoutes(r *gin.Engine, userHandler *UserHandler) {
 		public.GET("/", userHandler.Hello)
 	}
 
-	// 需要认证的用户路由 - 放在 /api/v1 下
+	// 需要认证的用户路由 - 放在 /api/v1/user 下
 	userGroup := r.Group("/api/v1/user")
 	userGroup.Use(middleware.JWTAuth())
 	{
 		// 用户信息接口 - /api/v1/user/info
 		userGroup.GET("/info", userHandler.GetUserInfo)
+		// 更新用户信息 - /api/v1/user/info
+		userGroup.PUT("/info", userHandler.UpdateUserInfo)
+		// 获取用户参数 - /api/v1/user/parameters
+		userGroup.GET("/parameters", userHandler.GetUserParameters)
+		// 更新用户参数 - /api/v1/user/parameters
+		userGroup.PUT("/parameters", userHandler.UpdateUserParameters)
+		// 获取用户会话列表 - /api/v1/user/sessions
+		userGroup.GET("/sessions", userHandler.GetUserSessions)
 	}
 }

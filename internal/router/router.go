@@ -25,14 +25,17 @@ func SetupRouter() *gin.Engine {
 	r.Use(middleware.CORS())
 
 	// 创建处理器
+	authHandler := NewAuthHandler()
 	userHandler := NewUserHandler()
 	configHandler := NewConfigHandler()
 	concurrentHandler := NewConcurrentHandler()
 
 	// 设置各模块路由
+	SetupAuthRoutes(r, authHandler)
 	SetupUserRoutes(r, userHandler)
 	SetupConfigRoutes(r, configHandler)
 	SetupConcurrentRoutes(r, concurrentHandler)
+	SetupAdminRoutes(r) // 管理员路由
 
 	// 健康检查
 	r.GET("/health", func(c *gin.Context) {

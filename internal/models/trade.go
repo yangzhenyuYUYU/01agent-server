@@ -25,7 +25,7 @@ type Trade struct {
 	DeletedAt      *gorm.DeletedAt `json:"-" gorm:"index"`
 
 	// 关联关系
-	User User `json:"user,omitempty" gorm:"-"`
+	User User `json:"user,omitempty" gorm:"foreignKey:UserID;references:UserID"`
 }
 
 // BPOrder BP订单模型

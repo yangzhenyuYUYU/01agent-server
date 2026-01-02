@@ -126,3 +126,57 @@ func GetCurrentUsername(c *gin.Context) (string, bool) {
 
 	return usernameStr, true
 }
+
+// AdminAuth 管理员认证中间件
+func AdminAuth() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// 先进行JWT认证
+		authHeader := c.GetHeader("Authorization")
+		if authHeader == "" {
+			c.JSON(http.StatusUnauthorized, models.ErrorResponse(401, "缺少授权头"))
+			c.Abort()
+			return
+		}
+
+		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+		if tokenString == authHeader {
+			c.JSON(http.StatusUnauthorized, models.ErrorResponse(401, "授权头格式错误"))
+			c.Abort()
+			return
+		}
+
+		claims, err := utils.ParseToken(tokenString)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, models.ErrorResponse(401, "无效的token"))
+			c.Abort()
+			return
+		}
+
+		userID := claims.UserID
+		if userID == "" {
+			userID = claims.Subject
+		}
+
+		// 查询用户信息，验证是否为管理员
+		var user models.User
+		if err := repository.DB.Where("user_id = ?", userID).First(&user).Error; err != nil {
+			c.JSON(http.StatusUnauthorized, models.ErrorResponse(401, "用户不存在"))
+			c.Abort()
+			return
+		}
+
+		// 验证管理员权限（Role = 3 表示管理员）
+		if user.Role != 3 {
+			c.JSON(http.StatusForbidden, models.ErrorResponse(403, "需要管理员权限"))
+			c.Abort()
+			return
+		}
+
+		// 将用户信息存储到上下文
+		c.Set("userID", userID)
+		c.Set("username", claims.Username)
+		c.Set("user", &user)
+
+		c.Next()
+	}
+}
