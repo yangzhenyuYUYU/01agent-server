@@ -3,7 +3,7 @@ package short_post
 import (
 	"time"
 
-	"gin_web/internal/models"
+	"01agent_server/internal/models"
 )
 
 // ProjectStatus 工程状态枚举

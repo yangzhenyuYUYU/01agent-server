@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"strings"
 
-	"gin_web/internal/models"
-	"gin_web/internal/repository"
-	utils "gin_web/internal/tools"
+	"01agent_server/internal/models"
+	"01agent_server/internal/repository"
+	utils "01agent_server/internal/tools"
 
 	"github.com/gin-gonic/gin"
 )

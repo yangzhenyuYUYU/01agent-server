@@ -1,7 +1,7 @@
 .PHONY: build run test clean docker-up docker-down help
 
 # 应用名称
-APP_NAME := gin_web
+APP_NAME := 01agent_server
 # 构建版本
 VERSION := $(shell git describe --tags --always --dirty)
 # 构建时间

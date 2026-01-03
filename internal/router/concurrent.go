@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"gin_web/internal/models"
-	"gin_web/internal/service"
+	"01agent_server/internal/models"
+	"01agent_server/internal/service"
 
 	"github.com/gin-gonic/gin"
 )
@@ -84,4 +84,4 @@ func SetupConcurrentRoutes(r *gin.Engine, concurrentHandler *ConcurrentHandler) 
 		public.GET("/concurrent/compare", concurrentHandler.CompareExecution)
 		public.GET("/concurrent/stress", concurrentHandler.StressTest)
 	}
-} 
+}

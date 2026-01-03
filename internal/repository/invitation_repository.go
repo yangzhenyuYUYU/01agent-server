@@ -3,7 +3,7 @@ package repository
 import (
 	"time"
 
-	"gin_web/internal/models"
+	"01agent_server/internal/models"
 
 	"gorm.io/gorm"
 )

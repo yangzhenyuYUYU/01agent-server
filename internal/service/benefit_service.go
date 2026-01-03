@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
-	"gin_web/internal/models"
-	"gin_web/internal/repository"
+	"01agent_server/internal/models"
+	"01agent_server/internal/repository"
 
 	"gorm.io/gorm"
 )

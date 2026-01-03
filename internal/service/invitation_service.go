@@ -5,8 +5,8 @@ import (
 	"math/rand"
 	"time"
 
-	"gin_web/internal/models"
-	"gin_web/internal/repository"
+	"01agent_server/internal/models"
+	"01agent_server/internal/repository"
 )
 
 type InvitationService struct {

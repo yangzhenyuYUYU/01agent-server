@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"gin_web/internal/config"
+	"01agent_server/internal/config"
 
 	"github.com/go-redis/redis/v8"
 )

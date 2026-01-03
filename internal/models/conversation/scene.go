@@ -1,7 +1,7 @@
 package conversation
 
 import (
-	"gin_web/internal/models"
+	"01agent_server/internal/models"
 	"time"
 )
 

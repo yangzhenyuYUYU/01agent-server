@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"gin_web/internal/config"
+	"01agent_server/internal/config"
 
 	"github.com/golang-jwt/jwt/v5"
 )

@@ -1,4 +1,4 @@
-module gin_web
+module 01agent_server
 
 go 1.21
 

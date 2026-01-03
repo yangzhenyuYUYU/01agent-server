@@ -1,7 +1,7 @@
 package service
 
 import (
-	"gin_web/internal/config"
+	"01agent_server/internal/config"
 )
 
 type ConfigService struct{}

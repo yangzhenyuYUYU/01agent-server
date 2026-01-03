@@ -3,8 +3,8 @@ package router
 import (
 	"net/http"
 
-	"gin_web/internal/models"
-	"gin_web/internal/service"
+	"01agent_server/internal/models"
+	"01agent_server/internal/service"
 
 	"github.com/gin-gonic/gin"
 )

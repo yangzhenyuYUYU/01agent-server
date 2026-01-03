@@ -5,10 +5,10 @@ import (
 	"strings"
 	"time"
 
-	"gin_web/internal/config"
-	"gin_web/internal/models"
-	"gin_web/internal/repository"
-	"gin_web/internal/tools"
+	"01agent_server/internal/config"
+	"01agent_server/internal/models"
+	"01agent_server/internal/repository"
+	"01agent_server/internal/tools"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"

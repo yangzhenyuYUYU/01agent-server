@@ -1,10 +1,10 @@
 package router
 
 import (
-	"gin_web/internal/middleware"
-	"gin_web/internal/models"
-	"gin_web/internal/repository"
-	"gin_web/internal/service"
+	"01agent_server/internal/middleware"
+	"01agent_server/internal/models"
+	"01agent_server/internal/repository"
+	"01agent_server/internal/service"
 
 	"github.com/gin-gonic/gin"
 )

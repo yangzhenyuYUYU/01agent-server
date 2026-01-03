@@ -5,12 +5,12 @@ import (
 	"strings"
 	"time"
 
-	"gin_web/internal/config"
-	"gin_web/internal/middleware"
-	"gin_web/internal/models"
-	"gin_web/internal/router/admin"
-	"gin_web/internal/router/digital"
-	utils "gin_web/internal/tools"
+	"01agent_server/internal/config"
+	"01agent_server/internal/middleware"
+	"01agent_server/internal/models"
+	"01agent_server/internal/router/admin"
+	"01agent_server/internal/router/digital"
+	utils "01agent_server/internal/tools"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"

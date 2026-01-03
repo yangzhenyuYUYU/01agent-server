@@ -3,7 +3,7 @@ package repository
 import (
 	"fmt"
 
-	"gin_web/internal/models"
+	"01agent_server/internal/models"
 )
 
 // AutoMigrate 自动迁移数据库表

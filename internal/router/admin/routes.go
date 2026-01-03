@@ -7,11 +7,11 @@ import (
 	"strings"
 	"time"
 
-	"gin_web/internal/middleware"
-	"gin_web/internal/models"
-	"gin_web/internal/models/short_post"
-	"gin_web/internal/repository"
-	"gin_web/internal/tools"
+	"01agent_server/internal/middleware"
+	"01agent_server/internal/models"
+	"01agent_server/internal/models/short_post"
+	"01agent_server/internal/repository"
+	"01agent_server/internal/tools"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"

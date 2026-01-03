@@ -5,7 +5,7 @@ import (
 	"log"
 	"time"
 
-	"gin_web/internal/config"
+	"01agent_server/internal/config"
 
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"

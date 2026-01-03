@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"log"
 
-	"gin_web/internal/config"
-	"gin_web/internal/repository"
-	"gin_web/internal/router"
+	"01agent_server/internal/config"
+	"01agent_server/internal/repository"
+	"01agent_server/internal/router"
 
 	"github.com/gin-gonic/gin"
 )

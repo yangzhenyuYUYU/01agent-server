@@ -3,8 +3,8 @@ package middleware
 import (
 	"net/http"
 
-	"gin_web/internal/models"
-	"gin_web/internal/repository"
+	"01agent_server/internal/models"
+	"01agent_server/internal/repository"
 
 	"github.com/gin-gonic/gin"
 )
