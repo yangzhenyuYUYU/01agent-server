@@ -1,6 +1,7 @@
-package models
+package conversation
 
 import (
+	"gin_web/internal/models"
 	"time"
 )
 
@@ -15,7 +16,7 @@ type ConversationScene struct {
 	UpdatedAt time.Time `json:"updated_at" gorm:"column:updated_at;autoUpdateTime" description:"更新时间"`
 
 	// 关联关系
-	User     *User                 `json:"user,omitempty" gorm:"-"`
+	User     *models.User          `json:"user,omitempty" gorm:"-"`
 	Messages []ConversationMessage `json:"messages,omitempty" gorm:"-"`
 }
 
@@ -23,4 +24,3 @@ type ConversationScene struct {
 func (ConversationScene) TableName() string {
 	return "conv_scenes"
 }
-

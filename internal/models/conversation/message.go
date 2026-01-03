@@ -1,6 +1,7 @@
-package models
+package conversation
 
 import (
+	"gin_web/internal/models"
 	"time"
 )
 
@@ -21,11 +22,10 @@ type ConversationMessage struct {
 
 	// 关联关系
 	Scene *ConversationScene `json:"scene,omitempty" gorm:"-"`
-	User  *User              `json:"user,omitempty" gorm:"-"`
+	User  *models.User       `json:"user,omitempty" gorm:"-"`
 }
 
 // 表名设置
 func (ConversationMessage) TableName() string {
 	return "conv_messages"
 }
-

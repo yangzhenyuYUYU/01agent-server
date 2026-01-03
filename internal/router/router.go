@@ -8,6 +8,8 @@ import (
 	"gin_web/internal/config"
 	"gin_web/internal/middleware"
 	"gin_web/internal/models"
+	"gin_web/internal/router/admin"
+	"gin_web/internal/router/digital"
 	utils "gin_web/internal/tools"
 
 	"github.com/gin-gonic/gin"
@@ -35,7 +37,8 @@ func SetupRouter() *gin.Engine {
 	SetupUserRoutes(r, userHandler)
 	SetupConfigRoutes(r, configHandler)
 	SetupConcurrentRoutes(r, concurrentHandler)
-	SetupAdminRoutes(r) // 管理员路由
+	admin.SetupAdminRoutes(r)          // 管理员路由
+	digital.SetupDigitalAdminRoutes(r) // 数字人管理端路由
 
 	// 健康检查
 	r.GET("/health", func(c *gin.Context) {

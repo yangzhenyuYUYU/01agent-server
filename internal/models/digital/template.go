@@ -1,6 +1,7 @@
-package models
+package digital
 
 import (
+	"gin_web/internal/models"
 	"time"
 )
 
@@ -13,13 +14,12 @@ type DigitalTemplateOrder struct {
 	CreatedAt  time.Time `json:"created_at" gorm:"column:created_at" description:"创建时间"`
 
 	// 关联关系
-	User     *User           `json:"user,omitempty" gorm:"-"`
+	User     *models.User     `json:"user,omitempty" gorm:"-"`
 	Template *DigitalTemplate `json:"template,omitempty" gorm:"-"`
-	Trade    *Trade          `json:"trade,omitempty" gorm:"-"`
+	Trade    *models.Trade    `json:"trade,omitempty" gorm:"-"`
 }
 
 // 表名设置
 func (DigitalTemplateOrder) TableName() string {
 	return "digital_template_orders"
 }
-

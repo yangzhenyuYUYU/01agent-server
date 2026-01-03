@@ -1,7 +1,8 @@
-package models
+package digital
 
 import (
 	"time"
+	"gin_web/internal/models"
 )
 
 // VoiceToneStatus 音色状态
@@ -51,7 +52,7 @@ type SourceSynthesisRecord struct {
 	UpdatedAt   time.Time    `json:"updated_at" gorm:"column:updated_at;autoUpdateTime" description:"更新时间"`
 
 	// 关联关系
-	User      *User      `json:"user,omitempty" gorm:"-"`
+	User      *models.User      `json:"user,omitempty" gorm:"-"`
 	VoiceTone *VoiceTone `json:"voice_tone,omitempty" gorm:"-"`
 }
 

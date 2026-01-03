@@ -1,4 +1,4 @@
-package router
+﻿package admin
 
 import (
 	"encoding/json"

@@ -8,8 +8,9 @@ import (
 type CardType string
 
 const (
-	CardTypeMembership CardType = "membership" // 会员卡
-	CardTypeCredits    CardType = "credits"    // 积分卡
+	CardTypeMembership  CardType = "membership"   // 会员卡
+	CardTypeCredits     CardType = "credits"      // 积分卡
+	CardTypeCreditsTemp CardType = "credits_temp" // 积分卡临时
 )
 
 // ActivationCode 激活码模型
@@ -55,4 +56,3 @@ func (a *ActivationCode) ToResponse() ActivationCodeResponse {
 		CreatedAt: a.CreatedAt.Format("2006-01-02 15:04:05"),
 	}
 }
-

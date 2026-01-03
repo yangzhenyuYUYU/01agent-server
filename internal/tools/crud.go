@@ -309,7 +309,14 @@ func (h *CRUDHandler) Delete(c *gin.Context) {
 		return
 	}
 
-	// 构建查询
+	// 使用反射创建模型实例
+	modelType := reflect.TypeOf(h.config.Model)
+	if modelType.Kind() == reflect.Ptr {
+		modelType = modelType.Elem()
+	}
+	item := reflect.New(modelType).Interface()
+
+	// 先查询记录是否存在
 	query := h.db.Model(h.config.Model)
 
 	// 尝试转换为整数ID
@@ -319,17 +326,30 @@ func (h *CRUDHandler) Delete(c *gin.Context) {
 		query = query.Where(fmt.Sprintf("%s = ?", h.config.PrimaryKey), id)
 	}
 
-	// 删除记录
-	if err := query.Delete(h.config.Model).Error; err != nil {
+	// 查询记录是否存在
+	if err := query.First(item).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(404, gin.H{"code": 404, "msg": "记录不存在"})
 			return
 		}
-		c.JSON(500, gin.H{"code": 500, "msg": "删除失败: " + err.Error()})
+		c.JSON(500, gin.H{"code": 500, "msg": "查询失败: " + err.Error()})
 		return
 	}
 
-	c.JSON(200, gin.H{"code": 0, "msg": "success", "data": nil})
+	// 物理删除记录（使用Unscoped确保真正删除，即使有软删除字段）
+	result := query.Unscoped().Delete(item)
+	if result.Error != nil {
+		c.JSON(500, gin.H{"code": 500, "msg": "删除失败: " + result.Error.Error()})
+		return
+	}
+
+	// 检查是否真的删除了记录
+	if result.RowsAffected == 0 {
+		c.JSON(404, gin.H{"code": 404, "msg": "记录不存在或已被删除"})
+		return
+	}
+
+	c.JSON(200, gin.H{"code": 0, "msg": "删除成功", "data": nil})
 }
 
 // getColumnName 从gorm tag中提取column名称
