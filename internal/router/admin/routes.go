@@ -29,7 +29,7 @@ func NewAdminHandler() *AdminHandler {
 
 // SetupAdminRoutes 设置管理员路由
 func SetupAdminRoutes(r *gin.Engine) {
-	admin := r.Group("/admin")
+	admin := r.Group("/api/v1/admin")
 	adminHandler := NewAdminHandler()
 
 	// 用户管理 CRUD

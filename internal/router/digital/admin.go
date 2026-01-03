@@ -11,7 +11,7 @@ import (
 
 // SetupDigitalAdminRoutes 设置数字人管理端路由
 func SetupDigitalAdminRoutes(r *gin.Engine) {
-	digitalAdmin := r.Group("/admin")
+	digitalAdmin := r.Group("/api/v1/admin")
 	digitalAdmin.Use(middleware.AdminAuth())
 
 	// 数字人分类管理 CRUD
