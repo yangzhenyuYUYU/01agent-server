@@ -50,6 +50,18 @@ func SetupAdminRoutes(r *gin.Engine) {
 		userGroup.PUT("/:id", userCRUD.Update)
 		userGroup.DELETE("/:id", userCRUD.Delete)
 		userGroup.POST("/cancel_subscription", adminHandler.CancelUserSubscription) // 取消用户订阅
+
+		// 分销商身份管理
+		userGroup.POST("/:id/distributor", adminHandler.SetDistributor)      // 设置分销商身份
+		userGroup.DELETE("/:id/distributor", adminHandler.RemoveDistributor) // 移除分销商身份
+		userGroup.GET("/:id/distributor", adminHandler.GetDistributorInfo)   // 获取分销商信息
+	}
+
+	// 分销商管理
+	distributorGroup := admin.Group("/distributor")
+	distributorGroup.Use(middleware.AdminAuth())
+	{
+		distributorGroup.GET("/list", adminHandler.GetDistributorList) // 获取分销商列表
 	}
 
 	// 用户会话管理 CRUD
@@ -3455,6 +3467,58 @@ func (h *AdminHandler) GetUserDetail(c *gin.Context) {
 		}
 	}
 
+	// 统计总邀请人数
+	var totalInvitations int64
+	if err := repository.DB.Model(&models.InvitationRelation{}).
+		Where("inviter_id = ?", userID).
+		Count(&totalInvitations).Error; err != nil {
+		repository.Errorf("统计邀请人数失败: %v", err)
+		totalInvitations = 0
+	}
+
+	// 统计积分信息
+	now := time.Now()
+
+	// 永久积分（从user表获取）
+	permanentCredits := user.Credits
+	if permanentCredits < 0 {
+		permanentCredits = 0
+	}
+
+	// 月度积分（统计所有未过期的月度积分总和）
+	var monthlyCredits int
+	if err := repository.DB.Model(&models.UserMonthlyBenefit{}).
+		Where("user_id = ? AND (expire_at IS NULL OR expire_at > ?)", userID, now).
+		Select("COALESCE(SUM(monthly_credits), 0)").
+		Scan(&monthlyCredits).Error; err != nil {
+		repository.Errorf("统计月度积分失败: %v", err)
+		monthlyCredits = 0
+	}
+
+	// 限时积分（统计所有未过期的限时积分总和）
+	var timedCredits int
+	if err := repository.DB.Model(&models.UserTimedCredits{}).
+		Where("user_id = ? AND expire_at > ?", userID, now).
+		Select("COALESCE(SUM(credits), 0)").
+		Scan(&timedCredits).Error; err != nil {
+		repository.Errorf("统计限时积分失败: %v", err)
+		timedCredits = 0
+	}
+
+	// 每日积分（获取当前日期的每日积分）
+	var dailyCredits int
+	var dailyBenefit models.UserDailyBenefit
+	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	todayEnd := todayStart.Add(24 * time.Hour)
+	if err := repository.DB.Model(&models.UserDailyBenefit{}).
+		Where("user_id = ? AND created_at >= ? AND created_at < ?", userID, todayStart, todayEnd).
+		First(&dailyBenefit).Error; err == nil {
+		dailyCredits = dailyBenefit.DailyCredits
+	}
+
+	// 计算总积分
+	totalCredits := permanentCredits + monthlyCredits + timedCredits + dailyCredits
+
 	// 构建返回数据
 	result := gin.H{
 		"user_id":           user.UserID,
@@ -3464,7 +3528,7 @@ func (h *AdminHandler) GetUserDetail(c *gin.Context) {
 		"phone":             user.Phone,
 		"email":             user.Email,
 		"openid":            user.OpenID,
-		"credits":           user.Credits,
+		"credits":           user.Credits, // 永久积分
 		"is_active":         user.IsActive,
 		"total_consumption": user.TotalConsumption,
 		"vip_level":         user.VipLevel,
@@ -3484,6 +3548,16 @@ func (h *AdminHandler) GetUserDetail(c *gin.Context) {
 			"qrcode_data":           userParam.QrcodeData,
 			"created_time":          userParam.CreatedTime.Format("2006-01-02 15:04:05"),
 			"updated_time":          userParam.UpdatedTime.Format("2006-01-02 15:04:05"),
+		},
+		// 邀请统计
+		"total_invitations": totalInvitations,
+		// 积分统计
+		"credits_detail": gin.H{
+			"permanent_credits": permanentCredits, // 永久积分
+			"monthly_credits":   monthlyCredits,   // 月度积分
+			"timed_credits":     timedCredits,     // 限时积分
+			"daily_credits":     dailyCredits,     // 每日积分（当日可用）
+			"total_credits":     totalCredits,     // 总积分
 		},
 	}
 
