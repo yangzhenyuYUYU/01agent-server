@@ -227,11 +227,9 @@ func (s *UserService) Login(req *models.UserLoginRequest, ipAddress string) (*mo
 	// 创建会话记录
 	session := &models.UserSession{
 		UserID:    user.UserID,
-		Token:     token,
+		Token:     tools.StringPtr(token),
 		IPAddress: ipAddress,
-		LoginTime: time.Now(),
-		ExpiresAt: time.Now().Add(24 * time.Hour), // 24小时过期
-		IsActive:  true,
+		CreatedAt: time.Now(),
 	}
 
 	if err := s.sessionRepo.Create(session); err != nil {
@@ -299,7 +297,7 @@ func (s *UserService) GetUserParameters(userID string) (*models.UserParameters, 
 // UpdateUserParameters 更新用户参数
 func (s *UserService) UpdateUserParameters(userID string, params *models.UserParameters) error {
 	params.UserID = userID
-	params.UpdatedAt = time.Now()
+	params.UpdatedTime = time.Now()
 	return s.parametersRepo.Update(params)
 }
 
@@ -506,14 +504,11 @@ func (s *UserService) LoginWithTypeV2(req *LoginRequest, ipAddress, deviceID, ol
 	// 创建会话记录
 	session := &models.UserSession{
 		UserID:         user.UserID,
-		Token:          token,
+		Token:          tools.StringPtr(token),
 		LoginType:      "web",
 		IPAddress:      ipAddress,
 		DeviceID:       tools.StringPtr(deviceID),
 		Status:         1, // 活跃
-		LoginTime:      time.Now(),
-		ExpiresAt:      time.Now().Add(24 * time.Hour),
-		IsActive:       true,
 		LastActiveTime: time.Now(),
 		CreatedAt:      time.Now(),
 	}

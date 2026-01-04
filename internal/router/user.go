@@ -289,10 +289,8 @@ func (h *UserHandler) GetUserSessions(c *gin.Context) {
 		sessionList = append(sessionList, gin.H{
 			"id":         session.ID,
 			"ip_address": session.IPAddress,
-			"login_time": session.LoginTime.Format("2006-01-02T15:04:05Z07:00"),
-			"expires_at": session.ExpiresAt.Format("2006-01-02T15:04:05Z07:00"),
-			"is_active":  session.IsActive,
 			"login_type": session.LoginType,
+			"created_at": session.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		})
 	}
 

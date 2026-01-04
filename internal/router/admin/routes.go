@@ -758,13 +758,13 @@ func (h *AdminHandler) AdminLogin(c *gin.Context) {
 	// 查找最新的活跃会话（按创建时间降序，取第一个）
 	if len(activeSessions) > 0 {
 		existingSession = &activeSessions[0]
-		if existingSession.Token != "" {
+		if existingSession.Token != nil {
 			// 如果存在可用的session，直接复用，更新活跃时间
 			existingSession.LastActiveTime = time.Now()
 			if err := sessionRepo.UpdateLastActiveTime(existingSession.ID); err != nil {
 				repository.Errorf("Failed to update session: %v", err)
 			} else {
-				token = existingSession.Token
+				token = *existingSession.Token
 			}
 		}
 	}
@@ -786,15 +786,11 @@ func (h *AdminHandler) AdminLogin(c *gin.Context) {
 		// 创建新的session
 		session := &models.UserSession{
 			UserID:         user.UserID,
-			Token:          token,
+			Token:          tools.StringPtr(token),
 			LoginType:      "web",
 			IPAddress:      ipAddress,
 			Status:         1,
-			LoginTime:      time.Now(),
-			ExpiresAt:      time.Now().Add(24 * time.Hour), // 24小时过期
-			IsActive:       true,
 			LastActiveTime: time.Now(),
-			CreatedAt:      time.Now(),
 		}
 
 		if err := sessionRepo.Create(session); err != nil {
@@ -914,8 +910,7 @@ func (h *AdminHandler) UserV2List(c *gin.Context) {
 		var token *string
 		if err := repository.DB.Where("user_id = ? AND is_active = ?", user.UserID, true).
 			Order("created_at DESC").First(&session).Error; err == nil {
-			tokenStr := session.Token
-			token = &tokenStr
+			token = session.Token
 		}
 
 		totalConsumption := 0.0
@@ -1100,7 +1095,7 @@ func (h *AdminHandler) UserV2List(c *gin.Context) {
 		if err := repository.DB.Where("user_id = ? AND is_active = ?", user.UserID, true).
 			Order("created_at DESC").First(&session).Error; err == nil {
 			tokenStr := session.Token
-			token = &tokenStr
+			token = tokenStr
 		}
 
 		totalConsumption := 0.0
@@ -3487,8 +3482,8 @@ func (h *AdminHandler) GetUserDetail(c *gin.Context) {
 			"has_auth_reminded":     userParam.HasAuthReminded,
 			"publish_target":        userParam.PublishTarget,
 			"qrcode_data":           userParam.QrcodeData,
-			"created_time":          userParam.CreatedAt.Format("2006-01-02 15:04:05"),
-			"updated_time":          userParam.UpdatedAt.Format("2006-01-02 15:04:05"),
+			"created_time":          userParam.CreatedTime.Format("2006-01-02 15:04:05"),
+			"updated_time":          userParam.UpdatedTime.Format("2006-01-02 15:04:05"),
 		},
 	}
 

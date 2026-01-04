@@ -35,10 +35,12 @@ func main() {
 	}
 
 	// 数据库迁移
-	if err := repository.AutoMigrate(); err != nil {
-		repository.Errorf("Failed to migrate database: %v", err)
-		log.Fatalf("Failed to migrate database: %v", err)
-	}
+	// 注意：暂时禁用自动迁移，避免 Go 模型定义影响现有数据库表结构
+	// 如需启用迁移（如添加新表或新字段），请取消下面的注释
+	// if err := repository.AutoMigrate(); err != nil {
+	// 	repository.Errorf("Failed to migrate database: %v", err)
+	// 	log.Fatalf("Failed to migrate database: %v", err)
+	// }
 
 	// 初始化Redis
 	if err := repository.InitRedis(); err != nil {

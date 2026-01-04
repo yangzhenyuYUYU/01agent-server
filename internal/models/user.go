@@ -4,47 +4,42 @@ import (
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
-	"gorm.io/gorm"
 )
 
 // User 用户模型 - 匹配现有数据库结构
 type User struct {
-	UserID           string          `json:"user_id" gorm:"primaryKey;column:user_id;type:varchar(50)" binding:"required"`
-	Nickname         *string         `json:"nickname" gorm:"column:nickname;type:varchar(50)"`
-	Avatar           *string         `json:"avatar" gorm:"column:avatar;type:varchar(255)"`
-	Username         *string         `json:"username" gorm:"column:username;type:varchar(50);uniqueIndex"`
-	PasswordHash     *string         `json:"-" gorm:"column:password_hash;type:longtext"`
-	AppID            *string         `json:"appid" gorm:"column:appid;type:varchar(50)"`
-	OpenID           *string         `json:"openid" gorm:"column:openid;type:varchar(100)"`
-	Phone            *string         `json:"phone" gorm:"column:phone;type:varchar(20)"`
-	Email            *string         `json:"email" gorm:"column:email;type:varchar(100);uniqueIndex"`
-	UtmSource        *string         `json:"utm_source" gorm:"column:utm_source;type:varchar(20);default:'direct'" description:"用户来源渠道"`
-	Credits          int             `json:"credits" gorm:"column:credits;default:0"`
-	IsActive         bool            `json:"is_active" gorm:"column:is_active;default:true"`
-	VipLevel         int             `json:"vip_level" gorm:"column:vip_level;default:0"`
-	Role             int16           `json:"role" gorm:"column:role;default:1"`
-	Status           int16           `json:"status" gorm:"column:status;default:1"`
-	RegistrationDate time.Time       `json:"registration_date" gorm:"column:registration_date"`
-	TotalConsumption *float64        `json:"total_consumption" gorm:"column:total_consumption;type:decimal(10,2)"`
-	LastLoginTime    time.Time       `json:"last_login_time" gorm:"column:last_login_time"`
-	UsageCount       int             `json:"usage_count" gorm:"column:usage_count;default:0"`
-	CreatedAt        time.Time       `json:"created_at" gorm:"column:created_at"`
-	UpdatedAt        time.Time       `json:"updated_at" gorm:"column:updated_at"`
-	DeletedAt        *gorm.DeletedAt `json:"-" gorm:"index"`
+	UserID           string    `json:"user_id" gorm:"primaryKey;column:user_id;type:varchar(50)" binding:"required"`
+	Nickname         *string   `json:"nickname" gorm:"column:nickname;type:varchar(50)"`
+	Avatar           *string   `json:"avatar" gorm:"column:avatar;type:varchar(255)"`
+	Username         *string   `json:"username" gorm:"column:username;type:varchar(50);uniqueIndex"`
+	PasswordHash     *string   `json:"-" gorm:"column:password_hash;type:longtext"`
+	AppID            *string   `json:"appid" gorm:"column:appid;type:varchar(50)"`
+	OpenID           *string   `json:"openid" gorm:"column:openid;type:varchar(100)"`
+	Phone            *string   `json:"phone" gorm:"column:phone;type:varchar(20)"`
+	Email            *string   `json:"email" gorm:"column:email;type:varchar(100);uniqueIndex"`
+	UtmSource        *string   `json:"utm_source" gorm:"column:utm_source;type:varchar(20);default:'direct'" description:"用户来源渠道"`
+	Credits          int       `json:"credits" gorm:"column:credits;default:0"`
+	IsActive         bool      `json:"is_active" gorm:"column:is_active;default:true"`
+	VipLevel         int       `json:"vip_level" gorm:"column:vip_level;default:0"`
+	Role             int16     `json:"role" gorm:"column:role;default:1"`
+	Status           int16     `json:"status" gorm:"column:status;default:1"`
+	RegistrationDate time.Time `json:"registration_date" gorm:"column:registration_date"`
+	TotalConsumption *float64  `json:"total_consumption" gorm:"column:total_consumption;type:decimal(10,2)"`
+	LastLoginTime    time.Time `json:"last_login_time" gorm:"column:last_login_time"`
+	UsageCount       int       `json:"usage_count" gorm:"column:usage_count;default:0"`
+	CreatedAt        time.Time `json:"created_at" gorm:"column:created_at"`
+	UpdatedAt        time.Time `json:"updated_at" gorm:"column:updated_at"`
 }
 
 // UserSession 用户会话模型
 type UserSession struct {
 	ID             int       `json:"id" gorm:"primaryKey;column:id"`
 	UserID         string    `json:"user_id" gorm:"column:user_id;type:varchar(50)"`
-	Token          string    `json:"token" gorm:"column:token;type:longtext"`
+	Token          *string   `json:"token" gorm:"column:token;type:longtext"`
 	LoginType      string    `json:"login_type" gorm:"column:login_type;type:varchar(20);default:'web'"`
 	IPAddress      string    `json:"ip_address" gorm:"column:ip_address;type:varchar(45)"`
 	DeviceID       *string   `json:"device_id" gorm:"column:device_id;type:varchar(100)"`
 	Status         int16     `json:"status" gorm:"column:status;default:1"`
-	LoginTime      time.Time `json:"login_time" gorm:"column:login_time"`
-	ExpiresAt      time.Time `json:"expires_at" gorm:"column:expires_at"`
-	IsActive       bool      `json:"is_active" gorm:"column:is_active;default:true"`
 	LastActiveTime time.Time `json:"last_active_time" gorm:"column:last_active_time"`
 	CreatedAt      time.Time `json:"created_at" gorm:"column:created_at"`
 }
@@ -55,15 +50,15 @@ type UserParameters struct {
 	UserID              string    `json:"user_id" gorm:"column:user_id;type:varchar(50)"`
 	EnableHeadInfo      bool      `json:"enable_head_info" gorm:"column:enable_head_info;default:false"`
 	EnableKnowledgeBase bool      `json:"enable_knowledge_base" gorm:"column:enable_knowledge_base;default:false"`
-	DefaultTheme        string    `json:"default_theme" gorm:"column:default_theme;type:varchar(50);default:'countryside'"`
-	IsGzhBind           bool      `json:"is_gzh_bind" gorm:"column:is_gzh_bind;default:false"`
+	DefaultTheme        string    `json:"default_theme" gorm:"column:default_theme;type:varchar(50);default:'minimal_ins'"`
 	IsWechatAuthorized  bool      `json:"is_wechat_authorized" gorm:"column:is_wechat_authorized;default:false"`
-	PublishTarget       int       `json:"publish_target" gorm:"column:publish_target"`
+	IsGzhBind           bool      `json:"is_gzh_bind" gorm:"column:is_gzh_bind;default:false"`
 	HasAuthReminded     bool      `json:"has_auth_reminded" gorm:"column:has_auth_reminded;default:false"`
+	PublishTarget       int       `json:"publish_target" gorm:"column:publish_target"`
 	QrcodeData          *string   `json:"qrcode_data" gorm:"column:qrcode_data;type:json"`
 	StorageQuota        int64     `json:"storage_quota" gorm:"column:storage_quota;default:314572800" description:"资源存储空间配额（字节），默认300MB"`
-	CreatedAt           time.Time `json:"created_at" gorm:"column:created_at"`
-	UpdatedAt           time.Time `json:"updated_at" gorm:"column:updated_at"`
+	CreatedTime         time.Time `json:"created_time" gorm:"column:created_time"`
+	UpdatedTime         time.Time `json:"updated_time" gorm:"column:updated_time"`
 }
 
 // 请求和响应结构
