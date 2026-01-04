@@ -92,6 +92,55 @@ type UserDailyBenefit struct {
 	User *User `json:"user,omitempty" gorm:"-"`
 }
 
+// UserMonthlyBenefit 用户每月权益模型
+// 积分类型说明：
+// - 用户积分（user.credits）：用户充值购买的永久积分，不会过期
+// - 每日积分（UserDailyBenefit）：每日赠送的积分，当日有效，次日清零
+// - 每月积分（UserMonthlyBenefit）：会员权益赠送的积分，会员有效期内有效，会员过期时清零
+// 消费优先级：每日积分 > 每月积分 > 用户积分
+type UserMonthlyBenefit struct {
+	ID               int        `json:"id" gorm:"primaryKey;column:id" description:"记录ID"`
+	UserID           string     `json:"user_id" gorm:"column:user_id;type:varchar(50);not null;index" description:"关联用户"`
+	UserProductionID *int       `json:"user_production_id" gorm:"column:user_production_id;index" description:"关联用户产品（哪个订阅产生的权益）"`
+	MonthlyCredits   int        `json:"monthly_credits" gorm:"column:monthly_credits;default:0" description:"每月积分额度（剩余可用）"`
+	BenefitMonth     time.Time  `json:"benefit_month" gorm:"column:benefit_month;type:date;not null;index" description:"权益月份（YYYY-MM-01格式，记录是哪个月发放的）"`
+	ExpireAt         *time.Time `json:"expire_at" gorm:"column:expire_at;index" description:"会员过期时间（积分在此时间后失效，NULL表示终身会员）"`
+	CreatedAt        time.Time  `json:"created_at" gorm:"column:created_at" description:"创建时间"`
+	UpdatedAt        time.Time  `json:"updated_at" gorm:"column:updated_at" description:"更新时间"`
+
+	// 关联关系
+	User           *User           `json:"user,omitempty" gorm:"foreignKey:UserID;references:UserID"`
+	UserProduction *UserProduction `json:"user_production,omitempty" gorm:"foreignKey:UserProductionID;references:ID"`
+}
+
+// TimedCreditSourceType 有期限积分来源类型
+const (
+	TimedCreditSourceInvite   = "invite"   // 邀请奖励
+	TimedCreditSourcePackage  = "package"  // 积分套餐购买
+	TimedCreditSourceActivity = "activity" // 活动奖励
+	TimedCreditSourceRegister = "register" // 注册奖励
+	TimedCreditSourceOther    = "other"    // 其他
+)
+
+// UserTimedCredits 用户有期限积分模型
+// 用于存储有有效期的积分（如邀请奖励、积分套餐购买的积分）
+// 这些积分有固定有效期，过期后自动失效
+// 消费优先级：每日积分 > 有期限积分（按过期时间升序） > 每月权益积分 > 永久积分
+type UserTimedCredits struct {
+	ID              int       `json:"id" gorm:"primaryKey;column:id" description:"记录ID"`
+	UserID          string    `json:"user_id" gorm:"column:user_id;type:varchar(50);not null;index" description:"关联用户"`
+	Credits         int       `json:"credits" gorm:"column:credits;default:0" description:"剩余积分"`
+	OriginalCredits int       `json:"original_credits" gorm:"column:original_credits;default:0" description:"原始积分"`
+	SourceType      string    `json:"source_type" gorm:"column:source_type;type:varchar(50);not null;index" description:"来源类型：invite/package/activity/register/other"`
+	SourceDesc      *string   `json:"source_desc" gorm:"column:source_desc;type:varchar(255)" description:"来源描述"`
+	ExpireAt        time.Time `json:"expire_at" gorm:"column:expire_at;not null;index" description:"过期时间"`
+	CreatedAt       time.Time `json:"created_at" gorm:"column:created_at" description:"创建时间"`
+	UpdatedAt       time.Time `json:"updated_at" gorm:"column:updated_at" description:"更新时间"`
+
+	// 关联关系
+	User *User `json:"user,omitempty" gorm:"foreignKey:UserID;references:UserID"`
+}
+
 // 表名设置
 func (CreditProduct) TableName() string {
 	return "credit_products"
@@ -111,6 +160,14 @@ func (CreditServicePrice) TableName() string {
 
 func (UserDailyBenefit) TableName() string {
 	return "user_daily_benefits"
+}
+
+func (UserMonthlyBenefit) TableName() string {
+	return "user_monthly_benefits"
+}
+
+func (UserTimedCredits) TableName() string {
+	return "user_timed_credits"
 }
 
 // 响应结构

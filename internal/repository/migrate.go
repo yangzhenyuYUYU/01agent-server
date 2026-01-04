@@ -50,6 +50,8 @@ func AutoMigrate() error {
 		&models.CreditRecord{},
 		&models.CreditServicePrice{},
 		&models.UserDailyBenefit{},
+		&models.UserMonthlyBenefit{},
+		&models.UserTimedCredits{},
 		// 文章相关
 		&models.ArticleEditTask{},
 		&models.ArticlePublishConfig{},

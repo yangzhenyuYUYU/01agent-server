@@ -134,13 +134,37 @@ func (h *AdminHandler) CancelUserSubscription(c *gin.Context) {
 	}
 
 	// 3. 删除用户每日权益记录
-	if err := tx.Where("user_id = ?", req.UserID).Delete(&models.UserDailyBenefit{}).Error; err != nil {
+	var deletedDailyBenefitsCount int64
+	dailyBenefitResult := tx.Where("user_id = ?", req.UserID).Delete(&models.UserDailyBenefit{})
+	if dailyBenefitResult.Error != nil {
 		tx.Rollback()
-		middleware.HandleError(c, middleware.NewBusinessError(500, "删除用户权益记录失败: "+err.Error()))
+		middleware.HandleError(c, middleware.NewBusinessError(500, "删除用户每日权益记录失败: "+dailyBenefitResult.Error.Error()))
 		return
 	}
+	deletedDailyBenefitsCount = dailyBenefitResult.RowsAffected
 
-	// 4. 如果 reset_vip_level 为 true，重置用户的 VIP 等级和角色
+	// 4. 删除用户每月权益记录
+	var deletedMonthlyBenefitsCount int64
+	monthlyBenefitResult := tx.Where("user_id = ?", req.UserID).Delete(&models.UserMonthlyBenefit{})
+	if monthlyBenefitResult.Error != nil {
+		tx.Rollback()
+		middleware.HandleError(c, middleware.NewBusinessError(500, "删除用户每月权益记录失败: "+monthlyBenefitResult.Error.Error()))
+		return
+	}
+	deletedMonthlyBenefitsCount = monthlyBenefitResult.RowsAffected
+
+	// 5. 删除用户积分奖励记录（CreditReward 类型，且 credits 绝对值大于 500）
+	var deletedCreditRecordsCount int64
+	creditRecordResult := tx.Where("user_id = ? AND record_type = ? AND (credits > 500 OR credits < -500)", req.UserID, int16(models.CreditReward)).
+		Delete(&models.CreditRecord{})
+	if creditRecordResult.Error != nil {
+		tx.Rollback()
+		middleware.HandleError(c, middleware.NewBusinessError(500, "删除用户积分奖励记录失败: "+creditRecordResult.Error.Error()))
+		return
+	}
+	deletedCreditRecordsCount = creditRecordResult.RowsAffected
+
+	// 6. 如果 reset_vip_level 为 true，重置用户的 VIP 等级和角色
 	oldVipLevel := user.VipLevel
 	oldRole := user.Role
 	if req.ResetVipLevel {
@@ -164,13 +188,16 @@ func (h *AdminHandler) CancelUserSubscription(c *gin.Context) {
 
 	// 构建返回数据
 	result := gin.H{
-		"user_id":                      user.UserID,
-		"username":                     user.Username,
-		"nickname":                     user.Nickname,
-		"deleted_user_productions":     deletedUserProductions,
-		"deleted_trades_count":         len(trades),
-		"reset_activation_codes_count": len(activationCodeIDs),
-		"reset_vip_level":              req.ResetVipLevel,
+		"user_id":                        user.UserID,
+		"username":                       user.Username,
+		"nickname":                       user.Nickname,
+		"deleted_user_productions":       deletedUserProductions,
+		"deleted_trades_count":           len(trades),
+		"reset_activation_codes_count":   len(activationCodeIDs),
+		"deleted_daily_benefits_count":   deletedDailyBenefitsCount,
+		"deleted_monthly_benefits_count": deletedMonthlyBenefitsCount,
+		"deleted_credit_records_count":   deletedCreditRecordsCount,
+		"reset_vip_level":                req.ResetVipLevel,
 	}
 
 	if req.ResetVipLevel {
