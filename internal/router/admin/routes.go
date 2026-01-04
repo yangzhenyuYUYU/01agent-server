@@ -49,6 +49,7 @@ func SetupAdminRoutes(r *gin.Engine) {
 		userGroup.POST("", userCRUD.Create)
 		userGroup.PUT("/:id", userCRUD.Update)
 		userGroup.DELETE("/:id", userCRUD.Delete)
+		userGroup.POST("/cancel_subscription", adminHandler.CancelUserSubscription) // 取消用户订阅
 	}
 
 	// 用户会话管理 CRUD

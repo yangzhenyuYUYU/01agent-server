@@ -76,9 +76,9 @@ type UserProduction struct {
 	UpdatedAt    time.Time `json:"updated_at" gorm:"column:updated_at" description:"更新时间"`
 
 	// 关联关系
-	User       *User       `json:"user,omitempty" gorm:"-"`
-	Production *Production `json:"production,omitempty" gorm:"-"`
-	Trade      *Trade      `json:"trade,omitempty" gorm:"-"`
+	User       *User       `json:"user,omitempty" gorm:"foreignKey:UserID;references:UserID"`
+	Production *Production `json:"production,omitempty" gorm:"foreignKey:ProductionID;references:ID"`
+	Trade      *Trade      `json:"trade,omitempty" gorm:"foreignKey:TradeID;references:ID"`
 }
 
 // 表名设置
