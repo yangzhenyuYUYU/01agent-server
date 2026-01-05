@@ -311,7 +311,7 @@ func SetupAdminRoutes(r *gin.Engine) {
 		versionGroup.GET("/:id", versionCRUD.Detail)
 		versionGroup.POST("", versionCRUD.Create)
 		versionGroup.POST("/create", adminHandler.CreateVersion)
-		versionGroup.PUT("/:id", versionCRUD.Update)
+		versionGroup.PUT("/:id", adminHandler.UpdateVersion)
 		versionGroup.DELETE("/:id", versionCRUD.Delete)
 	}
 
@@ -3718,6 +3718,112 @@ func (h *AdminHandler) CreateVersion(c *gin.Context) {
 	}
 
 	middleware.Success(c, "success", gin.H{})
+}
+
+// UpdateVersion 更新版本
+func (h *AdminHandler) UpdateVersion(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		middleware.HandleError(c, middleware.NewBusinessError(400, "缺少ID参数"))
+		return
+	}
+
+	var req struct {
+		Version    *string  `json:"version"`
+		Date       *string  `json:"date"` // YYYY-MM-DD
+		Title      *string  `json:"title"`
+		Type       *string  `json:"type"` // major / minor / patch
+		Highlights []string `json:"highlights"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(400, "参数错误: "+err.Error()))
+		return
+	}
+
+	// 查询现有记录
+	var version models.Version
+	if err := repository.DB.Where("id = ?", id).First(&version).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			middleware.HandleError(c, middleware.NewBusinessError(404, "记录不存在"))
+			return
+		}
+		middleware.HandleError(c, middleware.NewBusinessError(500, "查询失败: "+err.Error()))
+		return
+	}
+
+	// 更新字段
+	updateData := make(map[string]interface{})
+
+	if req.Version != nil {
+		updateData["version"] = *req.Version
+	}
+
+	if req.Date != nil {
+		date, err := time.Parse("2006-01-02", *req.Date)
+		if err != nil {
+			middleware.HandleError(c, middleware.NewBusinessError(400, "日期格式错误，应为 YYYY-MM-DD"))
+			return
+		}
+		updateData["date"] = date
+	}
+
+	if req.Title != nil {
+		updateData["title"] = *req.Title
+	}
+
+	if req.Highlights != nil {
+		// 转换 highlights 为 JSON 字符串
+		highlightsJSON, err := json.Marshal(req.Highlights)
+		if err != nil {
+			middleware.HandleError(c, middleware.NewBusinessError(400, "高亮信息格式错误"))
+			return
+		}
+		updateData["highlights"] = string(highlightsJSON)
+	}
+
+	if req.Type != nil {
+		if *req.Type == "" {
+			updateData["type"] = nil
+		} else {
+			vt := models.VersionType(*req.Type)
+			updateData["type"] = vt
+		}
+	}
+
+	// 执行更新
+	if err := repository.DB.Model(&version).Updates(updateData).Error; err != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(500, "更新失败: "+err.Error()))
+		return
+	}
+
+	// 查询更新后的记录
+	if err := repository.DB.Where("id = ?", id).First(&version).Error; err != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(500, "查询失败: "+err.Error()))
+		return
+	}
+
+	// 解析 highlights 用于返回
+	var highlights interface{}
+	if err := json.Unmarshal([]byte(version.Highlights), &highlights); err != nil {
+		highlights = version.Highlights
+	}
+
+	versionType := ""
+	if version.Type != nil {
+		versionType = string(*version.Type)
+	}
+
+	middleware.Success(c, "更新成功", gin.H{
+		"id":         version.ID,
+		"version":    version.Version,
+		"date":       version.Date.Format("2006-01-02"),
+		"title":      version.Title,
+		"type":       versionType,
+		"highlights": highlights,
+		"created_at": version.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		"updated_at": version.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
+	})
 }
 
 // GetMarketingActivities 获取营销活动列表
