@@ -2,49 +2,63 @@ package admin
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"01agent_server/internal/middleware"
 	"01agent_server/internal/models"
 	"01agent_server/internal/repository"
+	"01agent_server/internal/service/analytics"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
 // AnalyticsHandler 数据分析处理器
-type AnalyticsHandler struct{}
+type AnalyticsHandler struct {
+	metricsService *analytics.MetricsService
+	trendService   *analytics.TrendService
+}
 
 // NewAnalyticsHandler 创建数据分析处理器
 func NewAnalyticsHandler() *AnalyticsHandler {
-	return &AnalyticsHandler{}
+	return &AnalyticsHandler{
+		metricsService: analytics.NewMetricsService(),
+		trendService:   analytics.NewTrendService(),
+	}
 }
 
 // parseDateRange 解析和标准化日期范围
+// 统一使用本地时区（北京时间 UTC+8）来避免时区问题
 func parseDateRange(startDate, endDate string, defaultDays int) (time.Time, time.Time, error) {
 	var start, end time.Time
-	var err error
+
+	// 使用本地时区（北京时间）
+	loc := time.FixedZone("CST", 8*60*60) // UTC+8
 
 	if endDate == "" {
-		end = time.Now()
-		end = time.Date(end.Year(), end.Month(), end.Day(), 23, 59, 59, 999999999, end.Location())
+		now := time.Now().In(loc)
+		end = time.Date(now.Year(), now.Month(), now.Day(), 23, 59, 59, 999999999, loc)
 	} else {
-		end, err = time.Parse("2006-01-02", endDate)
+		// 解析日期，使用本地时区
+		parsed, err := time.ParseInLocation("2006-01-02", endDate, loc)
 		if err != nil {
 			return start, end, err
 		}
-		end = time.Date(end.Year(), end.Month(), end.Day(), 23, 59, 59, 999999999, end.Location())
+		end = time.Date(parsed.Year(), parsed.Month(), parsed.Day(), 23, 59, 59, 999999999, loc)
 	}
 
 	if startDate == "" {
 		start = end.AddDate(0, 0, -defaultDays)
-		start = time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, start.Location())
+		start = time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, loc)
 	} else {
-		start, err = time.Parse("2006-01-02", startDate)
+		// 解析日期，使用本地时区
+		parsed, err := time.ParseInLocation("2006-01-02", startDate, loc)
 		if err != nil {
 			return start, end, err
 		}
-		start = time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, start.Location())
+		start = time.Date(parsed.Year(), parsed.Month(), parsed.Day(), 0, 0, 0, 0, loc)
 	}
 
 	return start, end, nil
@@ -152,11 +166,30 @@ func (h *AnalyticsHandler) GetUserGrowth(c *gin.Context) {
 		}
 
 		// 统计当前周期内的用户数
+		// 参考Python代码：使用 current_date <= reg_date < next_date
+		// 统一使用本地时区（北京时间）进行比较
+		loc := currentDate.Location()
 		count := 0
 		for _, user := range users {
 			regDate := user.RegistrationDate
-			if !regDate.Before(currentDate) && regDate.Before(nextDate) {
-				count++
+			// 转换为本地时区（北京时间），类似Python的normalize_datetime
+			regDateInLoc := regDate.In(loc)
+
+			// 对于按天统计，提取日期部分进行比较，避免时区问题
+			if period == "day" {
+				// 提取日期部分（年月日），忽略时分秒
+				regDateOnly := time.Date(regDateInLoc.Year(), regDateInLoc.Month(), regDateInLoc.Day(), 0, 0, 0, 0, loc)
+				currentDateOnly := time.Date(currentDate.Year(), currentDate.Month(), currentDate.Day(), 0, 0, 0, 0, loc)
+
+				// 只比较日期是否相等
+				if regDateOnly.Equal(currentDateOnly) {
+					count++
+				}
+			} else {
+				// 对于周/月统计，使用时间范围比较：currentDate <= regDate < nextDate
+				if (regDateInLoc.Equal(currentDate) || regDateInLoc.After(currentDate)) && regDateInLoc.Before(nextDate) {
+					count++
+				}
 			}
 		}
 
@@ -314,14 +347,34 @@ func (h *AnalyticsHandler) GetPaymentTrend(c *gin.Context) {
 		}
 
 		// 统计当前周期内的交易
+		// 参考Python代码：使用 current_date <= normalized_paid_at < next_date
+		// 统一使用本地时区（北京时间）进行比较
+		loc := currentDate.Location()
 		var amount float64
 		count := 0
 		for _, trade := range trades {
 			if trade.PaidAt != nil {
 				paidAt := *trade.PaidAt
-				if !paidAt.Before(currentDate) && paidAt.Before(nextDate) {
-					amount += trade.Amount
-					count++
+				// 转换为本地时区（北京时间），类似Python的normalize_datetime
+				paidAtInLoc := paidAt.In(loc)
+
+				// 对于按天统计，提取日期部分进行比较，避免时区问题
+				if period == "day" {
+					// 提取日期部分（年月日），忽略时分秒
+					paidAtDate := time.Date(paidAtInLoc.Year(), paidAtInLoc.Month(), paidAtInLoc.Day(), 0, 0, 0, 0, loc)
+					currentDateOnly := time.Date(currentDate.Year(), currentDate.Month(), currentDate.Day(), 0, 0, 0, 0, loc)
+
+					// 只比较日期是否相等
+					if paidAtDate.Equal(currentDateOnly) {
+						amount += trade.Amount
+						count++
+					}
+				} else {
+					// 对于周/月统计，使用时间范围比较：currentDate <= paidAt < nextDate
+					if (paidAtInLoc.Equal(currentDate) || paidAtInLoc.After(currentDate)) && paidAtInLoc.Before(nextDate) {
+						amount += trade.Amount
+						count++
+					}
 				}
 			}
 		}
@@ -588,36 +641,24 @@ func (h *AnalyticsHandler) GetInvitationRanking(c *gin.Context) {
 		return
 	}
 
-	// 获取时间范围内的邀请关系记录
+	// 获取时间范围内的邀请关系记录（使用Preload一次性加载用户信息，优化性能）
 	var invitationRelations []models.InvitationRelation
 	if err := repository.DB.Where("created_at >= ? AND created_at <= ?", start, end).
+		Preload("Inviter").
+		Preload("Invitee").
 		Find(&invitationRelations).Error; err != nil && err != gorm.ErrRecordNotFound {
 		middleware.HandleError(c, middleware.NewBusinessError(500, "查询邀请关系失败: "+err.Error()))
 		return
 	}
 
-	// 收集所有唯一的用户ID（邀请人和被邀请人）
-	userIDSet := make(map[string]bool)
-	for _, relation := range invitationRelations {
-		userIDSet[relation.InviterID] = true
-		userIDSet[relation.InviteeID] = true
-	}
-
-	// 批量查询所有用户信息
-	userIDs := make([]string, 0, len(userIDSet))
-	for userID := range userIDSet {
-		userIDs = append(userIDs, userID)
-	}
-
+	// 构建用户信息映射（从Preload的数据中获取，避免额外查询）
 	userMap := make(map[string]*models.User)
-	if len(userIDs) > 0 {
-		var users []models.User
-		if err := repository.DB.Where("user_id IN ?", userIDs).Find(&users).Error; err != nil {
-			middleware.HandleError(c, middleware.NewBusinessError(500, "查询用户信息失败: "+err.Error()))
-			return
+	for i := range invitationRelations {
+		if invitationRelations[i].Inviter.UserID != "" {
+			userMap[invitationRelations[i].InviterID] = &invitationRelations[i].Inviter
 		}
-		for i := range users {
-			userMap[users[i].UserID] = &users[i]
+		if invitationRelations[i].Invitee.UserID != "" {
+			userMap[invitationRelations[i].InviteeID] = &invitationRelations[i].Invitee
 		}
 	}
 
@@ -676,47 +717,73 @@ func (h *AnalyticsHandler) GetInvitationRanking(c *gin.Context) {
 		inviterStats[inviterID] = stats
 	}
 
-	// 获取邀请人的佣金统计
+	// 批量获取所有邀请人的佣金统计（优化性能，避免N+1查询）
+	inviterIDs := make([]string, 0, len(inviterStats))
 	for inviterID := range inviterStats {
-		var totalCommission struct {
-			Total float64
-		}
-		repository.DB.Model(&models.CommissionRecord{}).
-			Select("COALESCE(SUM(amount), 0) as total").
-			Where("user_id = ? AND created_at >= ? AND created_at <= ?", inviterID, start, end).
-			Scan(&totalCommission)
+		inviterIDs = append(inviterIDs, inviterID)
+	}
 
+	// 批量查询总佣金（按用户ID分组）
+	type CommissionSummary struct {
+		UserID string
+		Total  float64
+		Status int
+	}
+	var commissionSummaries []CommissionSummary
+
+	if len(inviterIDs) > 0 {
+		// 一次性查询所有邀请人的佣金统计（按用户ID和状态分组）
+		if err := repository.DB.Model(&models.CommissionRecord{}).
+			Select("user_id, COALESCE(SUM(amount), 0) as total, status").
+			Where("user_id IN ? AND created_at >= ? AND created_at <= ?", inviterIDs, start, end).
+			Group("user_id, status").
+			Scan(&commissionSummaries).Error; err != nil {
+			repository.Errorf("批量查询佣金统计失败: %v", err)
+		}
+	}
+
+	// 将佣金统计结果组织到map中
+	commissionMap := make(map[string]map[string]float64) // userID -> statusName -> amount
+	for _, summary := range commissionSummaries {
+		if commissionMap[summary.UserID] == nil {
+			commissionMap[summary.UserID] = make(map[string]float64)
+			// 初始化所有佣金字段为0
+			commissionMap[summary.UserID]["total_commission"] = 0.0
+			commissionMap[summary.UserID]["pending_commission"] = 0.0
+			commissionMap[summary.UserID]["issued_commission"] = 0.0
+			commissionMap[summary.UserID]["withdrawn_commission"] = 0.0
+		}
+
+		statusName := "pending_commission"
+		if summary.Status == int(models.CommissionIssued) {
+			statusName = "issued_commission"
+		} else if summary.Status == int(models.CommissionWithdrawn) {
+			statusName = "withdrawn_commission"
+		}
+
+		commissionMap[summary.UserID][statusName] = summary.Total
+		// 累加总佣金
+		commissionMap[summary.UserID]["total_commission"] += summary.Total
+	}
+
+	// 将佣金数据填充到统计结果中
+	for inviterID := range inviterStats {
 		stats := inviterStats[inviterID]
-		stats["total_commission"] = totalCommission.Total
-
-		// 统计不同状态的佣金
-		for _, status := range []models.CommissionStatus{
-			models.CommissionPending,
-			models.CommissionIssued,
-			models.CommissionWithdrawn,
-		} {
-			var statusCommission struct {
-				Total float64
-			}
-			repository.DB.Model(&models.CommissionRecord{}).
-				Select("COALESCE(SUM(amount), 0) as total").
-				Where("user_id = ? AND status = ? AND created_at >= ? AND created_at <= ?",
-					inviterID, status, start, end).
-				Scan(&statusCommission)
-
-			statusName := "pending_commission"
-			if status == models.CommissionIssued {
-				statusName = "issued_commission"
-			} else if status == models.CommissionWithdrawn {
-				statusName = "withdrawn_commission"
-			}
-			stats[statusName] = statusCommission.Total
+		if commData, exists := commissionMap[inviterID]; exists {
+			stats["total_commission"] = commData["total_commission"]
+			stats["pending_commission"] = commData["pending_commission"]
+			stats["issued_commission"] = commData["issued_commission"]
+			stats["withdrawn_commission"] = commData["withdrawn_commission"]
+		} else {
+			stats["total_commission"] = 0.0
+			stats["pending_commission"] = 0.0
+			stats["issued_commission"] = 0.0
+			stats["withdrawn_commission"] = 0.0
 		}
-
 		inviterStats[inviterID] = stats
 	}
 
-	// 转换为列表并排序
+	// 转换为列表并按邀请人数降序排序（参考Python代码）
 	rankingList := make([]gin.H, 0, len(inviterStats))
 	for _, stats := range inviterStats {
 		// 只返回前5个被邀请人的信息
@@ -727,6 +794,21 @@ func (h *AnalyticsHandler) GetInvitationRanking(c *gin.Context) {
 		}
 		rankingList = append(rankingList, stats)
 	}
+
+	// 按邀请人数降序排序（参考Python代码：ranking_list.sort(key=lambda x: x['invitation_count'], reverse=True)）
+	// 使用sort.Slice进行稳定排序，确保相同邀请人数时顺序一致
+	sort.Slice(rankingList, func(i, j int) bool {
+		countI := rankingList[i]["invitation_count"].(int)
+		countJ := rankingList[j]["invitation_count"].(int)
+		// 按邀请人数降序排序
+		if countI != countJ {
+			return countI > countJ
+		}
+		// 如果邀请人数相同，按用户ID升序排序确保稳定性
+		userIDI := rankingList[i]["user_id"].(string)
+		userIDJ := rankingList[j]["user_id"].(string)
+		return userIDI < userIDJ
+	})
 
 	// 分页处理
 	var pageNum, size int
@@ -785,5 +867,221 @@ func (h *AnalyticsHandler) GetInvitationRanking(c *gin.Context) {
 			"total_invitations": totalInvitations,
 			"total_commission":  totalCommission,
 		},
+	})
+}
+
+// GetMetrics 获取统一的数据分析指标
+// @Summary 获取数据分析指标
+// @Description 获取指定日期和指标的数据，支持并行计算多个指标
+// @Tags admin-analytics
+// @Accept json
+// @Produce json
+// @Param date query string false "统计日期，格式：YYYY-MM-DD，默认为今天"
+// @Param metrics query string false "要获取的指标列表，多个指标用逗号分隔，如：active_users_daily,active_users_weekly。如果不指定则返回所有启用的指标"
+// @Param start_date query string false "开始日期（用于日期范围查询），格式：YYYY-MM-DD"
+// @Param end_date query string false "结束日期（用于日期范围查询），格式：YYYY-MM-DD"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/v1/admin/analytics/metrics [get]
+func (h *AnalyticsHandler) GetMetrics(c *gin.Context) {
+	dateStr := c.Query("date")
+	metricsStr := c.Query("metrics")
+	startDateStr := c.Query("start_date")
+	endDateStr := c.Query("end_date")
+
+	// 解析日期
+	loc := time.FixedZone("CST", 8*60*60)
+	var date time.Time
+	var err error
+
+	if dateStr != "" {
+		date, err = time.ParseInLocation("2006-01-02", dateStr, loc)
+		if err != nil {
+			middleware.HandleError(c, middleware.NewBusinessError(400, "日期格式错误，请使用YYYY-MM-DD格式"))
+			return
+		}
+	} else {
+		date = time.Now().In(loc)
+	}
+
+	// 解析指标列表
+	var metrics []analytics.MetricKey
+	if metricsStr != "" {
+		metricKeys := strings.Split(metricsStr, ",")
+		for _, key := range metricKeys {
+			key = strings.TrimSpace(key)
+			if key != "" {
+				metrics = append(metrics, analytics.MetricKey(key))
+			}
+		}
+	}
+
+	// 日期范围查询
+	if startDateStr != "" && endDateStr != "" {
+		startDate, err1 := time.ParseInLocation("2006-01-02", startDateStr, loc)
+		endDate, err2 := time.ParseInLocation("2006-01-02", endDateStr, loc)
+		if err1 != nil || err2 != nil {
+			middleware.HandleError(c, middleware.NewBusinessError(400, "日期范围格式错误，请使用YYYY-MM-DD格式"))
+			return
+		}
+
+		// 限制日期范围，避免查询时间过长
+		daysDiff := int(endDate.Sub(startDate).Hours() / 24)
+		if daysDiff > 90 {
+			middleware.HandleError(c, middleware.NewBusinessError(400, "日期范围不能超过90天，当前范围："+fmt.Sprintf("%d天", daysDiff)))
+			return
+		}
+
+		// 获取日期范围内的数据
+		results, err := h.metricsService.GetMetricsByDateRange(metrics, startDate, endDate)
+		if err != nil {
+			middleware.HandleError(c, middleware.NewBusinessError(500, "获取指标数据失败: "+err.Error()))
+			return
+		}
+
+		middleware.Success(c, "获取指标数据成功", gin.H{
+			"date_range": gin.H{
+				"start_date": startDateStr,
+				"end_date":   endDateStr,
+			},
+			"results": results,
+		})
+		return
+	}
+
+	// 单日查询
+	response, err := h.metricsService.GetMetrics(metrics, date)
+	if err != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(500, "获取指标数据失败: "+err.Error()))
+		return
+	}
+
+	middleware.Success(c, "获取指标数据成功", response)
+}
+
+// GetMetricsInfo 获取所有指标信息列表
+// @Summary 获取指标信息列表
+// @Description 获取所有可用的指标信息，包括指标定义、计算公式等
+// @Tags admin-analytics
+// @Accept json
+// @Produce json
+// @Success 200 {object} map[string]interface{}
+// @Router /api/v1/admin/analytics/metrics/info [get]
+func (h *AnalyticsHandler) GetMetricsInfo(c *gin.Context) {
+	infoList := h.metricsService.GetMetricInfoList()
+
+	// 按维度分组
+	dimensions := make(map[string][]analytics.MetricInfo)
+	for _, info := range infoList {
+		dimensionKey := string(info.Dimension)
+		dimensions[dimensionKey] = append(dimensions[dimensionKey], info)
+	}
+
+	middleware.Success(c, "获取指标信息成功", gin.H{
+		"metrics":    infoList,
+		"dimensions": dimensions,
+	})
+}
+
+// GetActivityTrend 获取用户活跃度趋势数据
+// @Summary 获取用户活跃度趋势
+// @Description 获取指定时间范围内的用户活跃度趋势数据，支持按天/周/月统计
+// @Tags admin-analytics
+// @Accept json
+// @Produce json
+// @Param period query string false "统计周期：day/week/month，默认为day"
+// @Param start_date query string true "开始日期，格式：YYYY-MM-DD"
+// @Param end_date query string true "结束日期，格式：YYYY-MM-DD"
+// @Param include_wau query bool false "是否包含周活数据，默认为true"
+// @Param include_mau query bool false "是否包含月活数据，默认为true"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/v1/admin/analytics/user/activity-trend [get]
+func (h *AnalyticsHandler) GetActivityTrend(c *gin.Context) {
+	period := c.DefaultQuery("period", "day")
+	startDateStr := c.Query("start_date")
+	endDateStr := c.Query("end_date")
+	includeWAUStr := c.DefaultQuery("include_wau", "true")
+	includeMAUStr := c.DefaultQuery("include_mau", "true")
+
+	if startDateStr == "" || endDateStr == "" {
+		middleware.HandleError(c, middleware.NewBusinessError(400, "开始日期和结束日期不能为空"))
+		return
+	}
+
+	// 解析日期
+	loc := time.FixedZone("CST", 8*60*60)
+	startDate, err1 := time.ParseInLocation("2006-01-02", startDateStr, loc)
+	endDate, err2 := time.ParseInLocation("2006-01-02", endDateStr, loc)
+	if err1 != nil || err2 != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(400, "日期格式错误，请使用YYYY-MM-DD格式"))
+		return
+	}
+
+	// 限制日期范围
+	daysDiff := int(endDate.Sub(startDate).Hours() / 24)
+	if daysDiff > 90 {
+		middleware.HandleError(c, middleware.NewBusinessError(400, "日期范围不能超过90天，当前范围："+fmt.Sprintf("%d天", daysDiff)))
+		return
+	}
+
+	// 解析布尔参数
+	includeWAU := includeWAUStr == "true"
+	includeMAU := includeMAUStr == "true"
+
+	// 获取趋势数据
+	response, err := h.trendService.GetActivityTrend(period, startDate, endDate, includeWAU, includeMAU)
+	if err != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(500, "获取趋势数据失败: "+err.Error()))
+		return
+	}
+
+	middleware.Success(c, "获取用户活跃度趋势成功", response)
+}
+
+// GetRegistrationSourceDistribution 获取注册来源分布
+// @Summary 获取注册来源分布
+// @Description 统计指定时间范围内的用户注册来源分布（utm_source字段）
+// @Tags admin-analytics
+// @Accept json
+// @Produce json
+// @Param start_date query string true "开始日期，格式：YYYY-MM-DD"
+// @Param end_date query string true "结束日期，格式：YYYY-MM-DD"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/v1/admin/analytics/traffic/source-distribution [get]
+func (h *AnalyticsHandler) GetRegistrationSourceDistribution(c *gin.Context) {
+	startDateStr := c.Query("start_date")
+	endDateStr := c.Query("end_date")
+
+	if startDateStr == "" || endDateStr == "" {
+		middleware.HandleError(c, middleware.NewBusinessError(400, "开始日期和结束日期不能为空"))
+		return
+	}
+
+	// 解析日期
+	loc := time.FixedZone("CST", 8*60*60)
+	startDate, err1 := time.ParseInLocation("2006-01-02", startDateStr, loc)
+	endDate, err2 := time.ParseInLocation("2006-01-02", endDateStr, loc)
+	if err1 != nil || err2 != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(400, "日期格式错误，请使用YYYY-MM-DD格式"))
+		return
+	}
+
+	// 获取来源分布
+	distributions, err := h.metricsService.GetTrafficSourceDistribution(startDate, endDate)
+	if err != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(500, "获取来源分布失败: "+err.Error()))
+		return
+	}
+
+	// 计算总计
+	totalCount := int64(0)
+	for _, dist := range distributions {
+		totalCount += dist.Count
+	}
+
+	middleware.Success(c, "获取注册来源分布成功", gin.H{
+		"start_date": startDateStr,
+		"end_date":   endDateStr,
+		"total":      totalCount,
+		"data":       distributions,
 	})
 }

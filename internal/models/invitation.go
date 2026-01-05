@@ -24,11 +24,11 @@ type InvitationRelation struct {
 	CodeID    int       `json:"code_id" gorm:"column:code_id;not null;index" description:"使用的邀请码ID"`
 	CreatedAt time.Time `json:"created_at" gorm:"column:created_at;autoCreateTime" description:"创建时间"`
 
-	// 关联关系 - 移除自动外键约束
-	Inviter     User               `json:"inviter,omitempty" gorm:"-"`
-	Invitee     User               `json:"invitee,omitempty" gorm:"-"`
-	Code        InvitationCode     `json:"code,omitempty" gorm:"-"`
-	Commissions []CommissionRecord `json:"commissions,omitempty" gorm:"-"`
+	// 关联关系 - 定义外键关联，支持Preload优化查询
+	Inviter     User               `json:"inviter,omitempty" gorm:"foreignKey:InviterID;references:UserID"`
+	Invitee     User               `json:"invitee,omitempty" gorm:"foreignKey:InviteeID;references:UserID"`
+	Code        InvitationCode     `json:"code,omitempty" gorm:"foreignKey:CodeID;references:ID"`
+	Commissions []CommissionRecord `json:"commissions,omitempty" gorm:"foreignKey:RelationID;references:ID"`
 }
 
 // CommissionStatus 佣金状态枚举 - 对应Python的CommissionStatus
@@ -73,9 +73,9 @@ type CommissionRecord struct {
 	WithdrawalTime *time.Time       `json:"withdrawal_time" gorm:"column:withdrawal_time" description:"提现时间"`
 	CreatedAt      time.Time        `json:"created_at" gorm:"column:created_at;autoCreateTime" description:"创建时间"`
 
-	// 关联关系 - 移除自动外键约束
-	User     User               `json:"user,omitempty" gorm:"-"`
-	Relation InvitationRelation `json:"relation,omitempty" gorm:"-"`
+	// 关联关系 - 定义外键关联，支持Preload优化查询
+	User     User               `json:"user,omitempty" gorm:"foreignKey:UserID;references:UserID"`
+	Relation InvitationRelation `json:"relation,omitempty" gorm:"foreignKey:RelationID;references:ID"`
 	// Order    Trade              `json:"order" gorm:"foreignKey:OrderID"` // 如果有订单模型的话
 }
 

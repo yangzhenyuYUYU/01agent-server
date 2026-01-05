@@ -462,9 +462,14 @@ func SetupAdminRoutes(r *gin.Engine) {
 	analyticsGroup := admin.Group("/analytics")
 	analyticsGroup.Use(middleware.AdminAuth())
 	{
+		// 统一的数据分析指标接口
+		analyticsGroup.GET("/metrics", analyticsHandler.GetMetrics)          // 获取指标数据
+		analyticsGroup.GET("/metrics/info", analyticsHandler.GetMetricsInfo) // 获取指标信息列表
+
 		// 用户数据统计
 		analyticsGroup.GET("/user/overview", analyticsHandler.GetUserOverview)
 		analyticsGroup.GET("/user/growth", analyticsHandler.GetUserGrowth)
+		analyticsGroup.GET("/user/activity-trend", analyticsHandler.GetActivityTrend) // 用户活跃度趋势
 
 		// 支付数据分析
 		analyticsGroup.GET("/payment/overview", analyticsHandler.GetPaymentOverview)
@@ -474,6 +479,19 @@ func SetupAdminRoutes(r *gin.Engine) {
 		analyticsGroup.GET("/business/cost-analysis", analyticsHandler.GetCostAnalysis)
 		analyticsGroup.GET("/business/sales-ranking", analyticsHandler.GetSalesRanking)
 		analyticsGroup.GET("/business/invitation-ranking", analyticsHandler.GetInvitationRanking)
+
+		// 流量来源分析
+		analyticsGroup.GET("/traffic/source-distribution", analyticsHandler.GetRegistrationSourceDistribution)
+	}
+
+	// 会员统计接口（需要管理员权限）
+	membershipHandler := NewMembershipHandler()
+	membershipGroup := admin.Group("/membership")
+	membershipGroup.Use(middleware.AdminAuth())
+	{
+		membershipGroup.GET("/overview", membershipHandler.GetMembershipOverview)     // 获取会员购买概览
+		membershipGroup.GET("/trend", membershipHandler.GetMembershipTrend)           // 获取会员购买趋势
+		membershipGroup.GET("/product-trend", membershipHandler.GetProductSalesTrend) // 获取产品销售趋势（折线图）
 	}
 
 	// 用户列表V2接口（需要管理员权限）
