@@ -716,3 +716,346 @@ func (h *AdminHandler) GetProductList(c *gin.Context) {
 		"page_size": req.PageSize,
 	})
 }
+
+// GetUserProductionList 获取用户的产品列表（带关联信息）
+func (h *AdminHandler) GetUserProductionList(c *gin.Context) {
+	userID := c.Param("user_id")
+	if userID == "" {
+		middleware.HandleError(c, middleware.NewBusinessError(400, "用户ID不能为空"))
+		return
+	}
+
+	var req struct {
+		Page     int    `form:"page" binding:"min=1"`
+		PageSize int    `form:"page_size" binding:"min=1,max=100"`
+		Status   string `form:"status"`
+	}
+
+	if err := c.ShouldBindQuery(&req); err != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(400, "参数错误: "+err.Error()))
+		return
+	}
+
+	// 设置默认值
+	if req.Page == 0 {
+		req.Page = 1
+	}
+	if req.PageSize == 0 {
+		req.PageSize = 10
+	}
+
+	// 构建查询
+	query := repository.DB.Model(&models.UserProduction{}).
+		Where("user_id = ?", userID).
+		Preload("User").
+		Preload("Production").
+		Preload("Trade")
+
+	// 状态筛选
+	if req.Status != "" {
+		query = query.Where("status = ?", req.Status)
+	}
+
+	// 获取总数
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(500, "查询失败: "+err.Error()))
+		return
+	}
+
+	// 分页查询
+	offset := (req.Page - 1) * req.PageSize
+	var userProductions []models.UserProduction
+	if err := query.Order("created_at DESC").Offset(offset).Limit(req.PageSize).Find(&userProductions).Error; err != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(500, "查询失败: "+err.Error()))
+		return
+	}
+
+	// 构建返回数据
+	items := make([]gin.H, 0, len(userProductions))
+	for _, up := range userProductions {
+		item := gin.H{
+			"id":            up.ID,
+			"user_id":       up.UserID,
+			"production_id": up.ProductionID,
+			"trade_id":      up.TradeID,
+			"status":        up.Status,
+			"created_at":    up.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+			"updated_at":    up.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		}
+
+		// 添加用户信息
+		if up.User != nil {
+			item["user"] = gin.H{
+				"user_id":  up.User.UserID,
+				"username": up.User.Username,
+				"phone":    up.User.Phone,
+				"nickname": up.User.Nickname,
+				"avatar":   up.User.Avatar,
+			}
+		}
+
+		// 添加产品信息
+		if up.Production != nil {
+			item["production"] = gin.H{
+				"id":           up.Production.ID,
+				"name":         up.Production.Name,
+				"description":  up.Production.Description,
+				"price":        up.Production.Price,
+				"product_type": up.Production.ProductType,
+			}
+		}
+
+		// 添加交易信息
+		if up.Trade != nil {
+			item["trade"] = gin.H{
+				"id":             up.Trade.ID,
+				"trade_no":       up.Trade.TradeNo,
+				"amount":         up.Trade.Amount,
+				"payment_status": up.Trade.PaymentStatus,
+				"created_at":     up.Trade.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+			}
+		}
+
+		items = append(items, item)
+	}
+
+	middleware.Success(c, "success", gin.H{
+		"total":     total,
+		"items":     items,
+		"page":      req.Page,
+		"page_size": req.PageSize,
+	})
+}
+
+// GetUserProductionDetail 获取用户产品详情（带关联信息）
+func (h *AdminHandler) GetUserProductionDetail(c *gin.Context) {
+	idStr := c.Param("id")
+	if idStr == "" {
+		middleware.HandleError(c, middleware.NewBusinessError(400, "ID不能为空"))
+		return
+	}
+
+	var id int
+	if _, err := fmt.Sscanf(idStr, "%d", &id); err != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(400, "ID格式错误"))
+		return
+	}
+
+	var userProduction models.UserProduction
+	if err := repository.DB.Where("id = ?", id).
+		Preload("User").
+		Preload("Production").
+		Preload("Trade").
+		First(&userProduction).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			middleware.HandleError(c, middleware.NewBusinessError(404, "用户产品不存在"))
+			return
+		}
+		middleware.HandleError(c, middleware.NewBusinessError(500, "查询失败: "+err.Error()))
+		return
+	}
+
+	// 构建返回数据
+	result := gin.H{
+		"id":            userProduction.ID,
+		"user_id":       userProduction.UserID,
+		"production_id": userProduction.ProductionID,
+		"trade_id":      userProduction.TradeID,
+		"status":        userProduction.Status,
+		"created_at":    userProduction.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		"updated_at":    userProduction.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
+	}
+
+	// 添加用户信息
+	if userProduction.User != nil {
+		result["user"] = gin.H{
+			"user_id":  userProduction.User.UserID,
+			"username": userProduction.User.Username,
+			"phone":    userProduction.User.Phone,
+			"nickname": userProduction.User.Nickname,
+			"avatar":   userProduction.User.Avatar,
+		}
+	}
+
+	// 添加产品信息
+	if userProduction.Production != nil {
+		result["production"] = gin.H{
+			"id":              userProduction.Production.ID,
+			"name":            userProduction.Production.Name,
+			"description":     userProduction.Production.Description,
+			"price":           userProduction.Production.Price,
+			"original_price":  userProduction.Production.OriginalPrice,
+			"product_type":    userProduction.Production.ProductType,
+			"validity_period": userProduction.Production.ValidityPeriod,
+			"status":          userProduction.Production.Status,
+		}
+	}
+
+	// 添加交易信息
+	if userProduction.Trade != nil {
+		result["trade"] = gin.H{
+			"id":              userProduction.Trade.ID,
+			"trade_no":        userProduction.Trade.TradeNo,
+			"amount":          userProduction.Trade.Amount,
+			"trade_type":      userProduction.Trade.TradeType,
+			"payment_channel": userProduction.Trade.PaymentChannel,
+			"payment_status":  userProduction.Trade.PaymentStatus,
+			"title":           userProduction.Trade.Title,
+			"created_at":      userProduction.Trade.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		}
+		if userProduction.Trade.PaidAt != nil {
+			result["paid_at"] = userProduction.Trade.PaidAt.Format("2006-01-02T15:04:05Z07:00")
+		}
+	}
+
+	middleware.Success(c, "success", result)
+}
+
+// GetUserProductionListForCRUD 获取用户产品列表（用于标准CRUD接口，带关联信息）
+func (h *AdminHandler) GetUserProductionListForCRUD(c *gin.Context) {
+	var req struct {
+		Page           int    `form:"page" binding:"min=1"`
+		PageSize       int    `form:"page_size" binding:"min=1,max=9999"`
+		Search         string `form:"search"`
+		OrderBy        string `form:"order_by"`
+		OrderDirection string `form:"order_direction"`
+		UserID         string `form:"user_id"`
+		ProductionID   string `form:"production_id"`
+		TradeID        string `form:"trade_id"`
+		Status         string `form:"status"`
+	}
+
+	if err := c.ShouldBindQuery(&req); err != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(400, "参数错误: "+err.Error()))
+		return
+	}
+
+	// 设置默认值
+	if req.Page == 0 {
+		req.Page = 1
+	}
+	if req.PageSize == 0 {
+		req.PageSize = 10
+	}
+	if req.OrderDirection == "" {
+		req.OrderDirection = "desc"
+	} else if req.OrderDirection != "asc" && req.OrderDirection != "desc" {
+		middleware.HandleError(c, middleware.NewBusinessError(400, "参数错误: order_direction 只能是 'asc' 或 'desc'"))
+		return
+	}
+
+	// 构建查询，使用Preload批量加载关联数据，避免N+1查询
+	query := repository.DB.Model(&models.UserProduction{}).
+		Preload("User").
+		Preload("Production").
+		Preload("Trade")
+
+	// 动态筛选
+	if req.UserID != "" {
+		query = query.Where("user_id = ?", req.UserID)
+	}
+	if req.ProductionID != "" {
+		query = query.Where("production_id = ?", req.ProductionID)
+	}
+	if req.TradeID != "" {
+		query = query.Where("trade_id = ?", req.TradeID)
+	}
+	if req.Status != "" {
+		query = query.Where("status = ?", req.Status)
+	}
+
+	// 搜索功能
+	if req.Search != "" {
+		searchPattern := "%" + req.Search + "%"
+		query = query.Where("user_id LIKE ? OR production_id LIKE ? OR trade_id LIKE ?",
+			searchPattern, searchPattern, searchPattern)
+	}
+
+	// 排序
+	orderBy := req.OrderBy
+	if orderBy == "" {
+		orderBy = "created_at"
+	}
+	if req.OrderDirection == "asc" {
+		query = query.Order(orderBy + " ASC")
+	} else {
+		query = query.Order(orderBy + " DESC")
+	}
+
+	// 获取总数
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(500, "查询失败: "+err.Error()))
+		return
+	}
+
+	// 分页查询
+	offset := (req.Page - 1) * req.PageSize
+	var userProductions []models.UserProduction
+	if err := query.Offset(offset).Limit(req.PageSize).Find(&userProductions).Error; err != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(500, "查询失败: "+err.Error()))
+		return
+	}
+
+	// 构建返回数据，将user_id替换为完整的user对象
+	items := make([]gin.H, 0, len(userProductions))
+	for _, up := range userProductions {
+		item := gin.H{
+			"id":            up.ID,
+			"production_id": up.ProductionID,
+			"trade_id":      up.TradeID,
+			"status":        up.Status,
+			"created_at":    up.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+			"updated_at":    up.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		}
+
+		// 添加完整的用户信息（替换user_id）
+		if up.User != nil {
+			item["user"] = gin.H{
+				"user_id":  up.User.UserID,
+				"username": up.User.Username,
+				"phone":    up.User.Phone,
+				"nickname": up.User.Nickname,
+				"avatar":   up.User.Avatar,
+			}
+		} else {
+			// 如果关联数据未加载，至少返回user_id
+			item["user"] = gin.H{
+				"user_id": up.UserID,
+			}
+		}
+
+		// 添加产品信息
+		if up.Production != nil {
+			item["production"] = gin.H{
+				"id":           up.Production.ID,
+				"name":         up.Production.Name,
+				"description":  up.Production.Description,
+				"price":        up.Production.Price,
+				"product_type": up.Production.ProductType,
+			}
+		}
+
+		// 添加交易信息
+		if up.Trade != nil {
+			item["trade"] = gin.H{
+				"id":             up.Trade.ID,
+				"trade_no":       up.Trade.TradeNo,
+				"amount":         up.Trade.Amount,
+				"payment_status": up.Trade.PaymentStatus,
+			}
+		}
+
+		items = append(items, item)
+	}
+
+	middleware.Success(c, "success", gin.H{
+		"total":     total,
+		"items":     items,
+		"page":      req.Page,
+		"page_size": req.PageSize,
+		"ordering":  orderBy,
+		"direction": req.OrderDirection,
+	})
+}

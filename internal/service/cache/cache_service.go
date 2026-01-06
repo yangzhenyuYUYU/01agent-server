@@ -383,6 +383,85 @@ func (s *CacheService) UpdateCache(req *UpdateCacheRequest) (*UpdateCacheRespons
 	}, nil
 }
 
+// CreateCacheRequest 创建缓存的请求参数
+type CreateCacheRequest struct {
+	DBIndex    int    `json:"db_index"`
+	Key        string `json:"key"`
+	Value      string `json:"value"`
+	Type       string `json:"type"`       // 类型，目前只支持 "string"
+	Expiration *int   `json:"expiration"` // 过期时间（秒），nil表示未设置，0表示永不过期
+	TTL        *int   `json:"ttl"`        // TTL（过期时间，秒），如果提供则优先使用，nil表示未设置，0表示永不过期
+}
+
+// CreateCacheResponse 创建缓存的响应
+type CreateCacheResponse struct {
+	Key        string `json:"key"`
+	Value      string `json:"value"`
+	Type       string `json:"type"`
+	Expiration int    `json:"expiration"`
+	Created    bool   `json:"created"`
+}
+
+// CreateCache 创建Redis缓存
+func (s *CacheService) CreateCache(req *CreateCacheRequest) (*CreateCacheResponse, error) {
+	if req.Key == "" {
+		return nil, fmt.Errorf("键名不能为空")
+	}
+
+	if req.DBIndex < 0 {
+		req.DBIndex = 0
+	}
+
+	// 默认类型为 string
+	if req.Type == "" {
+		req.Type = "string"
+	}
+
+	// 只支持创建 string 类型
+	if req.Type != "string" {
+		return nil, fmt.Errorf("目前只支持创建 string 类型的键，不支持类型: %s", req.Type)
+	}
+
+	// 检查键是否已存在
+	exists, err := s.redis.Exists(req.Key, req.DBIndex)
+	if err != nil {
+		repository.Errorf("检查键是否存在失败: %v", err)
+		return nil, fmt.Errorf("检查键失败: %w", err)
+	}
+
+	if exists {
+		return nil, fmt.Errorf("键已存在，请使用更新接口")
+	}
+
+	// 确定使用的过期时间：优先使用TTL字段（如果提供了），否则使用Expiration字段
+	var expiration int
+	if req.TTL != nil {
+		// TTL字段已提供，优先使用TTL
+		expiration = *req.TTL
+	} else if req.Expiration != nil {
+		// TTL未提供，使用Expiration
+		expiration = *req.Expiration
+	} else {
+		// 两者都未提供，默认为0（永不过期）
+		expiration = 0
+	}
+
+	// 创建缓存键
+	err = s.redis.Set(req.Key, req.Value, expiration, req.DBIndex)
+	if err != nil {
+		repository.Errorf("创建缓存失败: %v", err)
+		return nil, fmt.Errorf("创建缓存失败: %w", err)
+	}
+
+	return &CreateCacheResponse{
+		Key:        req.Key,
+		Value:      req.Value,
+		Type:       req.Type,
+		Expiration: expiration,
+		Created:    true,
+	}, nil
+}
+
 // DeleteCacheRequest 删除缓存的请求参数
 type DeleteCacheRequest struct {
 	DBIndex int      `json:"db_index"`

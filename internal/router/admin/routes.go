@@ -288,6 +288,28 @@ func SetupAdminRoutes(r *gin.Engine) {
 		tradeV2Group.POST("/list", adminHandler.GetTradeV2List)
 	}
 
+	// 用户产品管理 CRUD
+	userProductionCRUD := tools.NewCRUDHandler(tools.CRUDConfig{
+		Model:          &models.UserProduction{},
+		SearchFields:   []string{"user_id", "production_id", "trade_id"},
+		DefaultOrderBy: "created_at",
+		RequireAdmin:   true,
+		PrimaryKey:     "id",
+	}, repository.DB)
+	userProductionGroup := admin.Group("/user_production")
+	userProductionGroup.Use(middleware.AdminAuth())
+	{
+		// 使用自定义List方法，返回完整的user信息而不是只有user_id
+		userProductionGroup.GET("/list", adminHandler.GetUserProductionListForCRUD)
+		userProductionGroup.GET("/:id", userProductionCRUD.Detail)
+		userProductionGroup.POST("", userProductionCRUD.Create)
+		userProductionGroup.PUT("/:id", userProductionCRUD.Update)
+		userProductionGroup.DELETE("/:id", userProductionCRUD.Delete)
+		// 自定义接口：获取用户产品列表（带关联信息）
+		userProductionGroup.GET("/user/:user_id", adminHandler.GetUserProductionList)
+		userProductionGroup.GET("/detail/:id", adminHandler.GetUserProductionDetail)
+	}
+
 	// 版本管理接口（需要管理员权限）
 	versionCRUD := tools.NewCRUDHandler(tools.CRUDConfig{
 		Model:          &models.Version{},
@@ -582,6 +604,7 @@ func SetupAdminRoutes(r *gin.Engine) {
 	{
 		cacheGroup.GET("/list", cacheHandler.ListCache)
 		cacheGroup.GET("/detail", cacheHandler.GetCacheDetail)
+		cacheGroup.POST("/create", cacheHandler.CreateCache)
 		cacheGroup.POST("/clear", cacheHandler.ClearCache)
 		cacheGroup.PUT("/update", cacheHandler.UpdateCache)
 		cacheGroup.DELETE("/delete", cacheHandler.DeleteCache)

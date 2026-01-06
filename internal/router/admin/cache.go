@@ -223,3 +223,44 @@ func (h *CacheHandler) DeleteCache(c *gin.Context) {
 		"deleted_count": response.DeletedCount,
 	})
 }
+
+// CreateCache 创建Redis缓存
+// @Summary 创建Redis缓存
+// @Description 创建新的Redis缓存键，目前只支持string类型
+// @Tags admin-cache
+// @Accept json
+// @Produce json
+// @Param body body cache.CreateCacheRequest true "创建缓存请求"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/v1/admin/cache/create [post]
+func (h *CacheHandler) CreateCache(c *gin.Context) {
+	var req cache.CreateCacheRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(400, "参数错误: "+err.Error()))
+		return
+	}
+
+	if req.Key == "" {
+		middleware.HandleError(c, middleware.NewBusinessError(400, "键名不能为空"))
+		return
+	}
+
+	response, err := h.cacheService.CreateCache(&req)
+	if err != nil {
+		// 判断是否是键已存在的错误
+		if err.Error() == "键已存在，请使用更新接口" {
+			middleware.HandleError(c, middleware.NewBusinessError(400, err.Error()))
+			return
+		}
+		middleware.HandleError(c, middleware.NewBusinessError(500, err.Error()))
+		return
+	}
+
+	middleware.Success(c, "创建缓存成功", gin.H{
+		"key":        response.Key,
+		"value":      response.Value,
+		"type":       response.Type,
+		"expiration": response.Expiration,
+		"created":    response.Created,
+	})
+}

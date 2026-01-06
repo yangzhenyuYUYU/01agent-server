@@ -135,6 +135,10 @@ type UserProduction struct {
 }
 
 // 表名设置
+func (UserProduction) TableName() string {
+	return "user_productions"
+}
+
 func (Trade) TableName() string {
 	return "trades"
 }
@@ -145,10 +149,6 @@ func (BPOrder) TableName() string {
 
 func (Production) TableName() string {
 	return "productions"
-}
-
-func (UserProduction) TableName() string {
-	return "user_productions"
 }
 
 // 响应结构
