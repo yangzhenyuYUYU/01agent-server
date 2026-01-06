@@ -2,6 +2,7 @@ package cache
 
 import (
 	"fmt"
+	"sync"
 
 	"01agent_server/internal/repository"
 	"01agent_server/internal/tools"
@@ -25,6 +26,7 @@ type ListCacheRequest struct {
 	Page     int    `form:"page"`
 	PageSize int    `form:"page_size"`
 	Pattern  string `form:"pattern"`
+	Keyword  string `form:"keyword"` // 关键词，用于模糊查询key
 }
 
 // ListCacheResponse 列出缓存的响应
@@ -49,11 +51,16 @@ func (s *CacheService) ListCache(req *ListCacheRequest) (*ListCacheResponse, err
 	if req.PageSize == 0 {
 		req.PageSize = 20
 	}
-	if req.Pattern == "" {
-		req.Pattern = "*"
-	}
 	if req.PageSize > 100 {
 		req.PageSize = 100
+	}
+
+	// 如果提供了 keyword，则使用它来构建模糊查询的 pattern
+	// 如果同时提供了 pattern 和 keyword，keyword 优先
+	if req.Keyword != "" {
+		req.Pattern = "*" + req.Keyword + "*"
+	} else if req.Pattern == "" {
+		req.Pattern = "*"
 	}
 
 	// 获取所有匹配的键
@@ -76,22 +83,8 @@ func (s *CacheService) ListCache(req *ListCacheRequest) (*ListCacheResponse, err
 		keys = allKeys[offset:end]
 	}
 
-	// 获取每个键的详细信息
-	items := make([]tools.KeyInfo, 0, len(keys))
-	for _, key := range keys {
-		info, err := s.redis.GetKeyInfo(key, req.DBIndex)
-		if err != nil {
-			repository.Warnf("获取键信息失败 %s: %v", key, err)
-			// 创建一个基本的 KeyInfo，表示获取失败
-			items = append(items, tools.KeyInfo{
-				Key:  key,
-				Type: "unknown",
-				TTL:  -1,
-			})
-			continue
-		}
-		items = append(items, *info)
-	}
+	// 使用并发获取每个键的详细信息，提升性能
+	items := s.getKeysInfoConcurrently(keys, req.DBIndex)
 
 	// 获取数据库大小
 	dbSize, _ := s.redis.DBSize(req.DBIndex)
@@ -104,6 +97,72 @@ func (s *CacheService) ListCache(req *ListCacheRequest) (*ListCacheResponse, err
 		PageSize: req.PageSize,
 		List:     items,
 	}, nil
+}
+
+// getKeysInfoConcurrently 并发获取多个键的详细信息
+// 使用worker pool模式控制并发数量，提升性能
+func (s *CacheService) getKeysInfoConcurrently(keys []string, dbIndex int) []tools.KeyInfo {
+	if len(keys) == 0 {
+		return []tools.KeyInfo{}
+	}
+
+	// 控制并发数量，避免创建过多goroutines导致Redis连接池耗尽
+	// 根据键的数量动态调整worker数量，最多20个并发
+	maxWorkers := 20
+	if len(keys) < maxWorkers {
+		maxWorkers = len(keys)
+	}
+
+	// 预分配结果切片，保持顺序
+	items := make([]tools.KeyInfo, len(keys))
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	// 创建任务channel
+	keyChan := make(chan int, maxWorkers*2) // 带缓冲，提高吞吐量
+
+	// 启动worker goroutines
+	for i := 0; i < maxWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for idx := range keyChan {
+				key := keys[idx]
+				info, err := s.redis.GetKeyInfo(key, dbIndex)
+
+				// 准备结果，减少锁持有时间
+				var result tools.KeyInfo
+				if err != nil {
+					repository.Warnf("获取键信息失败 %s: %v", key, err)
+					result = tools.KeyInfo{
+						Key:  key,
+						Type: "unknown",
+						TTL:  -1,
+					}
+				} else {
+					result = *info
+				}
+
+				// 使用mutex保护共享的items切片写入
+				mu.Lock()
+				items[idx] = result
+				mu.Unlock()
+			}
+		}()
+	}
+
+	// 发送所有索引到channel
+	go func() {
+		defer close(keyChan)
+		for i := range keys {
+			keyChan <- i
+		}
+	}()
+
+	// 等待所有worker完成
+	wg.Wait()
+
+	return items
 }
 
 // GetCacheDetailRequest 获取缓存详情的请求参数
@@ -221,8 +280,9 @@ func (s *CacheService) ClearCache(req *ClearCacheRequest) (*ClearCacheResponse, 
 type UpdateCacheRequest struct {
 	DBIndex    int    `json:"db_index"`
 	Key        string `json:"key"`
-	Value      string `json:"value"`
-	Expiration int    `json:"expiration"` // 过期时间（秒），0表示永不过期
+	Value      string `json:"value"`      // 值，如果为空则只更新TTL
+	Expiration *int   `json:"expiration"` // 过期时间（秒），nil表示未设置，0表示永不过期
+	TTL        *int   `json:"ttl"`        // TTL（过期时间，秒），如果提供则优先使用，nil表示未设置，0表示永不过期
 }
 
 // UpdateCacheResponse 更新缓存的响应
@@ -254,28 +314,108 @@ func (s *CacheService) UpdateCache(req *UpdateCacheRequest) (*UpdateCacheRespons
 		return nil, fmt.Errorf("键不存在")
 	}
 
-	// 检查键类型，只允许更新 string 类型
-	info, err := s.redis.GetKeyInfo(req.Key, req.DBIndex)
-	if err != nil {
-		repository.Errorf("获取键信息失败: %v", err)
-		return nil, fmt.Errorf("获取键信息失败: %w", err)
+	// 确定使用的过期时间：优先使用TTL字段（如果提供了），否则使用Expiration字段
+	// 使用指针类型来区分"未设置"和"设置为0"
+	var expiration int
+	if req.TTL != nil {
+		// TTL字段已提供，优先使用TTL
+		expiration = *req.TTL
+	} else if req.Expiration != nil {
+		// TTL未提供，使用Expiration
+		expiration = *req.Expiration
+	} else {
+		// 两者都未提供，默认为0（永不过期）
+		expiration = 0
 	}
 
-	if info.Type != "string" {
-		return nil, fmt.Errorf("只支持更新 string 类型的键，当前类型: %s", info.Type)
-	}
+	// 获取当前值（如果只更新TTL时需要保留原值）
+	var currentValue string
+	onlyUpdateTTL := req.Value == ""
 
-	// 更新值
-	err = s.redis.Set(req.Key, req.Value, req.Expiration, req.DBIndex)
-	if err != nil {
-		repository.Errorf("更新缓存失败: %v", err)
-		return nil, fmt.Errorf("更新缓存失败: %w", err)
+	if onlyUpdateTTL {
+		// 只更新TTL，需要先获取当前值
+		info, err := s.redis.GetKeyInfo(req.Key, req.DBIndex)
+		if err != nil {
+			repository.Errorf("获取键信息失败: %v", err)
+			return nil, fmt.Errorf("获取键信息失败: %w", err)
+		}
+
+		// 检查键类型
+		if info.Type != "string" {
+			return nil, fmt.Errorf("只支持更新 string 类型的键，当前类型: %s", info.Type)
+		}
+
+		currentValue = info.Value
+
+		// 只更新TTL
+		err = s.redis.Expire(req.Key, expiration, req.DBIndex)
+		if err != nil {
+			repository.Errorf("更新TTL失败: %v", err)
+			return nil, fmt.Errorf("更新TTL失败: %w", err)
+		}
+	} else {
+		// 同时更新值和TTL
+		// 检查键类型，只允许更新 string 类型
+		info, err := s.redis.GetKeyInfo(req.Key, req.DBIndex)
+		if err != nil {
+			repository.Errorf("获取键信息失败: %v", err)
+			return nil, fmt.Errorf("获取键信息失败: %w", err)
+		}
+
+		if info.Type != "string" {
+			return nil, fmt.Errorf("只支持更新 string 类型的键，当前类型: %s", info.Type)
+		}
+
+		// 更新值和TTL
+		err = s.redis.Set(req.Key, req.Value, expiration, req.DBIndex)
+		if err != nil {
+			repository.Errorf("更新缓存失败: %v", err)
+			return nil, fmt.Errorf("更新缓存失败: %w", err)
+		}
+		currentValue = req.Value
 	}
 
 	return &UpdateCacheResponse{
 		Key:        req.Key,
-		Value:      req.Value,
-		Expiration: req.Expiration,
+		Value:      currentValue,
+		Expiration: expiration,
 		Updated:    true,
+	}, nil
+}
+
+// DeleteCacheRequest 删除缓存的请求参数
+type DeleteCacheRequest struct {
+	DBIndex int      `json:"db_index"`
+	Keys    []string `json:"keys"`
+}
+
+// DeleteCacheResponse 删除缓存的响应
+type DeleteCacheResponse struct {
+	DBIndex      int      `json:"db_index"`
+	Keys         []string `json:"keys"`
+	DeletedCount int64    `json:"deleted_count"`
+}
+
+// DeleteCache 删除指定的Redis缓存键
+func (s *CacheService) DeleteCache(req *DeleteCacheRequest) (*DeleteCacheResponse, error) {
+	if req.DBIndex < 0 {
+		return nil, fmt.Errorf("数据库索引不能为负数")
+	}
+
+	if len(req.Keys) == 0 {
+		return nil, fmt.Errorf("键列表不能为空")
+	}
+
+	// 批量删除键
+	err := s.redis.DeleteKeys(req.Keys, req.DBIndex)
+	if err != nil {
+		repository.Errorf("删除Redis缓存失败: %v", err)
+		return nil, fmt.Errorf("删除缓存失败: %w", err)
+	}
+
+	return &DeleteCacheResponse{
+		DBIndex:      req.DBIndex,
+		Keys:         req.Keys,
+		DeletedCount: int64(len(req.Keys)),
 	}, nil
 }

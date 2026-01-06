@@ -577,13 +577,14 @@ func SetupAdminRoutes(r *gin.Engine) {
 
 	// 缓存管理接口（需要管理员权限）
 	cacheHandler := NewCacheHandler()
-	cacheGroup := admin.Group("/admin/cache")
+	cacheGroup := admin.Group("/cache")
 	cacheGroup.Use(middleware.AdminAuth())
 	{
 		cacheGroup.GET("/list", cacheHandler.ListCache)
 		cacheGroup.GET("/detail", cacheHandler.GetCacheDetail)
 		cacheGroup.POST("/clear", cacheHandler.ClearCache)
 		cacheGroup.PUT("/update", cacheHandler.UpdateCache)
+		cacheGroup.DELETE("/delete", cacheHandler.DeleteCache)
 	}
 
 	// 健康检查（不需要管理员权限，用于测试）

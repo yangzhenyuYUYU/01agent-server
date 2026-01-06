@@ -29,8 +29,9 @@ func NewCacheHandler() *CacheHandler {
 // @Param page query int false "页码，默认为1"
 // @Param page_size query int false "每页数量，默认为20，最大100"
 // @Param pattern query string false "键匹配模式，默认为*"
+// @Param keyword query string false "关键词，用于模糊查询key（如果提供，会覆盖pattern）"
 // @Success 200 {object} map[string]interface{}
-// @Router /api/v1/admin/admin/cache/list [get]
+// @Router /api/v1/admin/cache/list [get]
 func (h *CacheHandler) ListCache(c *gin.Context) {
 	var req cache.ListCacheRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -80,7 +81,7 @@ func (h *CacheHandler) ListCache(c *gin.Context) {
 // @Param db_index query int true "Redis数据库索引"
 // @Param key query string true "缓存键名"
 // @Success 200 {object} map[string]interface{}
-// @Router /api/v1/admin/admin/cache/detail [get]
+// @Router /api/v1/admin/cache/detail [get]
 func (h *CacheHandler) GetCacheDetail(c *gin.Context) {
 	var req cache.GetCacheDetailRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -128,7 +129,7 @@ func (h *CacheHandler) GetCacheDetail(c *gin.Context) {
 // @Produce json
 // @Param body body cache.ClearCacheRequest true "清除缓存请求"
 // @Success 200 {object} map[string]interface{}
-// @Router /api/v1/admin/admin/cache/clear [post]
+// @Router /api/v1/admin/cache/clear [post]
 func (h *CacheHandler) ClearCache(c *gin.Context) {
 	var req cache.ClearCacheRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -151,13 +152,13 @@ func (h *CacheHandler) ClearCache(c *gin.Context) {
 
 // UpdateCache 更新Redis缓存
 // @Summary 更新Redis缓存
-// @Description 更新指定Redis键的值，仅支持string类型
+// @Description 更新指定Redis键的值和/或TTL，仅支持string类型。如果value为空，则只更新TTL；如果提供了value，则同时更新值和TTL。支持ttl字段（优先）或expiration字段设置过期时间。
 // @Tags admin-cache
 // @Accept json
 // @Produce json
 // @Param body body cache.UpdateCacheRequest true "更新缓存请求"
 // @Success 200 {object} map[string]interface{}
-// @Router /api/v1/admin/admin/cache/update [put]
+// @Router /api/v1/admin/cache/update [put]
 func (h *CacheHandler) UpdateCache(c *gin.Context) {
 	var req cache.UpdateCacheRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -186,5 +187,39 @@ func (h *CacheHandler) UpdateCache(c *gin.Context) {
 		"value":      response.Value,
 		"expiration": response.Expiration,
 		"updated":    response.Updated,
+	})
+}
+
+// DeleteCache 删除Redis缓存
+// @Summary 删除Redis缓存
+// @Description 删除指定的Redis缓存键
+// @Tags admin-cache
+// @Accept json
+// @Produce json
+// @Param body body cache.DeleteCacheRequest true "删除缓存请求"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/v1/admin/cache/delete [delete]
+func (h *CacheHandler) DeleteCache(c *gin.Context) {
+	var req cache.DeleteCacheRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(400, "参数错误: "+err.Error()))
+		return
+	}
+
+	if len(req.Keys) == 0 {
+		middleware.HandleError(c, middleware.NewBusinessError(400, "键列表不能为空"))
+		return
+	}
+
+	response, err := h.cacheService.DeleteCache(&req)
+	if err != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(500, err.Error()))
+		return
+	}
+
+	middleware.Success(c, "删除缓存成功", gin.H{
+		"db_index":      response.DBIndex,
+		"keys":          response.Keys,
+		"deleted_count": response.DeletedCount,
 	})
 }

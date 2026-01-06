@@ -105,6 +105,21 @@ func (r *Redis) Set(key string, value string, expiration int, db int) error {
 	return client.Set(ctx, key, value, 0).Err()
 }
 
+// Expire 设置键的过期时间
+func (r *Redis) Expire(key string, expiration int, db int) error {
+	client, err := r.getClient(db)
+	if err != nil {
+		return err
+	}
+
+	ctx := context.Background()
+	if expiration > 0 {
+		return client.Expire(ctx, key, time.Duration(expiration)*time.Second).Err()
+	}
+	// expiration为0或负数时，移除过期时间（设置为永不过期）
+	return client.Persist(ctx, key).Err()
+}
+
 // Delete 删除键
 func (r *Redis) Delete(key string, db int) error {
 	client, err := r.getClient(db)
@@ -190,12 +205,12 @@ func (r *Redis) GetAllKeys(pattern string, db int) ([]string, error) {
 
 // GetKeyInfo 获取键的详细信息
 type KeyInfo struct {
-	Key        string `json:"key"`
-	Type       string `json:"type"`
-	TTL        int64  `json:"ttl"`        // 剩余过期时间（秒），-1表示永不过期，-2表示不存在
-	Size       int64  `json:"size"`       // 值的字节大小
-	Value      string `json:"value"`      // 值（仅字符串类型）
-	ValueLen   int64  `json:"value_len"`  // 值的长度（列表、集合等）
+	Key      string `json:"key"`
+	Type     string `json:"type"`
+	TTL      int64  `json:"ttl"`       // 剩余过期时间（秒），-1表示永不过期，-2表示不存在
+	Size     int64  `json:"size"`      // 值的字节大小
+	Value    string `json:"value"`     // 值（仅字符串类型）
+	ValueLen int64  `json:"value_len"` // 值的长度（列表、集合等）
 }
 
 // GetKeyInfo 获取键的详细信息
