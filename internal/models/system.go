@@ -33,6 +33,7 @@ type Feedback struct {
 	ContactInfo *string   `json:"contact_info" gorm:"column:contact_info;type:varchar(100)" description:"联系方式"`
 	Images      *string   `json:"images" gorm:"column:images;type:json" description:"相关图片URL列表"`
 	Status      string    `json:"status" gorm:"column:status;type:varchar(20);not null;default:'pending'" description:"处理状态"`
+	AdminReply  *string   `json:"admin_reply" gorm:"column:admin_reply;type:longtext" description:"管理员回复"`
 	CreatedAt   time.Time `json:"created_at" gorm:"column:created_at;autoCreateTime" description:"创建时间"`
 	UpdatedAt   time.Time `json:"updated_at" gorm:"column:updated_at;autoUpdateTime" description:"更新时间"`
 

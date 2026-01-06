@@ -7,6 +7,7 @@ import (
 	"01agent_server/internal/middleware"
 	"01agent_server/internal/models"
 	"01agent_server/internal/repository"
+	"01agent_server/internal/tools"
 
 	"github.com/gin-gonic/gin"
 )
@@ -548,4 +549,320 @@ func (h *CreditRecordHandler) GetServiceStats(c *gin.Context) {
 		"usage_ratio":       fmt.Sprintf("%.2f", usageRatio),
 		"remaining_credits": totalIssued - totalConsumed,
 	})
+}
+
+// GetCreditProduct2List 获取积分产品列表
+func (h *AdminHandler) GetCreditProduct2List(c *gin.Context) {
+	var req struct {
+		Page     int `form:"page" binding:"min=1"`
+		PageSize int `form:"page_size" binding:"min=1"`
+	}
+
+	if err := c.ShouldBindQuery(&req); err != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(400, "参数错误: "+err.Error()))
+		return
+	}
+
+	// 设置默认值
+	if req.Page == 0 {
+		req.Page = 1
+	}
+	if req.PageSize == 0 {
+		req.PageSize = 10
+	}
+
+	// 获取总数
+	var total int64
+	if err := repository.DB.Model(&models.CreditProduct{}).Count(&total).Error; err != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(500, "查询失败: "+err.Error()))
+		return
+	}
+
+	// 分页查询
+	offset := (req.Page - 1) * req.PageSize
+	var products []models.CreditProduct
+	if err := repository.DB.Order("created_at DESC").
+		Offset(offset).
+		Limit(req.PageSize).
+		Find(&products).Error; err != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(500, "查询失败: "+err.Error()))
+		return
+	}
+
+	// 构建返回数据
+	result := make([]gin.H, 0, len(products))
+	for _, item := range products {
+		result = append(result, gin.H{
+			"id":         item.ID,
+			"name":       item.Name,
+			"credits":    item.Credits,
+			"price":      item.Price,
+			"status":     item.Status,
+			"created_at": item.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+			"updated_at": item.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		})
+	}
+
+	middleware.Success(c, "success", gin.H{
+		"total":     total,
+		"items":     result,
+		"page":      req.Page,
+		"page_size": req.PageSize,
+	})
+}
+
+// GetCreditRechargeOrderList 获取积分充值订单列表
+func (h *AdminHandler) GetCreditRechargeOrderList(c *gin.Context) {
+	var req struct {
+		Page     int `form:"page" binding:"min=1"`
+		PageSize int `form:"page_size" binding:"min=1"`
+	}
+
+	if err := c.ShouldBindQuery(&req); err != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(400, "参数错误: "+err.Error()))
+		return
+	}
+
+	// 设置默认值
+	if req.Page == 0 {
+		req.Page = 1
+	}
+	if req.PageSize == 0 {
+		req.PageSize = 10
+	}
+
+	// 获取总数
+	var total int64
+	if err := repository.DB.Model(&models.CreditRechargeOrder{}).Count(&total).Error; err != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(500, "查询失败: "+err.Error()))
+		return
+	}
+
+	// 分页查询
+	offset := (req.Page - 1) * req.PageSize
+	var orders []models.CreditRechargeOrder
+	if err := repository.DB.Order("created_at DESC").
+		Offset(offset).
+		Limit(req.PageSize).
+		Find(&orders).Error; err != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(500, "查询失败: "+err.Error()))
+		return
+	}
+
+	// 构建返回数据
+	result := make([]gin.H, 0, len(orders))
+	for _, order := range orders {
+		// 加载关联数据
+		var product models.CreditProduct
+		repository.DB.Where("id = ?", order.ProductID).First(&product)
+
+		var trade models.Trade
+		repository.DB.Where("id = ?", order.TradeID).First(&trade)
+
+		var user models.User
+		repository.DB.Where("user_id = ?", order.UserID).First(&user)
+
+		result = append(result, gin.H{
+			"id":           order.ID,
+			"user_id":      order.UserID,
+			"user_phone":   user.Phone,
+			"product_id":   order.ProductID,
+			"product_name": product.Name,
+			"trade_id":     order.TradeID,
+			"created_at":   order.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		})
+	}
+
+	middleware.Success(c, "获取成功", gin.H{
+		"total":     total,
+		"items":     result,
+		"page":      req.Page,
+		"page_size": req.PageSize,
+	})
+}
+
+// GetCreditRechargeOrderSummary 获取积分充值订单汇总
+func (h *AdminHandler) GetCreditRechargeOrderSummary(c *gin.Context) {
+	// 总订单数
+	var totalOrders int64
+	repository.DB.Model(&models.CreditRechargeOrder{}).Count(&totalOrders)
+
+	// 总充值金额（通过关联的 Trade 表）
+	var totalAmount float64
+	repository.DB.Table("credit_recharge_orders").
+		Select("COALESCE(SUM(trades.amount), 0)").
+		Joins("LEFT JOIN trades ON credit_recharge_orders.trade_id = trades.id").
+		Scan(&totalAmount)
+
+	// 总充值积分（通过关联的 CreditProduct 表）
+	var totalCredits int64
+	repository.DB.Table("credit_recharge_orders").
+		Select("COALESCE(SUM(credit_products.credits), 0)").
+		Joins("LEFT JOIN credit_products ON credit_recharge_orders.product_id = credit_products.id").
+		Scan(&totalCredits)
+
+	// 今日订单数
+	today := time.Now().Format("2006-01-02")
+	var todayOrders int64
+	repository.DB.Model(&models.CreditRechargeOrder{}).
+		Where("DATE(created_at) = ?", today).
+		Count(&todayOrders)
+
+	// 今日充值金额
+	var todayAmount float64
+	repository.DB.Table("credit_recharge_orders").
+		Select("COALESCE(SUM(trades.amount), 0)").
+		Joins("LEFT JOIN trades ON credit_recharge_orders.trade_id = trades.id").
+		Where("DATE(credit_recharge_orders.created_at) = ?", today).
+		Scan(&todayAmount)
+
+	// 今日充值积分
+	var todayCredits int64
+	repository.DB.Table("credit_recharge_orders").
+		Select("COALESCE(SUM(credit_products.credits), 0)").
+		Joins("LEFT JOIN credit_products ON credit_recharge_orders.product_id = credit_products.id").
+		Where("DATE(credit_recharge_orders.created_at) = ?", today).
+		Scan(&todayCredits)
+
+	middleware.Success(c, "获取成功", gin.H{
+		"total_orders":  totalOrders,
+		"total_amount":  totalAmount,
+		"total_credits": totalCredits,
+		"today_orders":  todayOrders,
+		"today_amount":  todayAmount,
+		"today_credits": todayCredits,
+	})
+}
+
+// GetCreditRecordsStatsOverview 获取积分记录概览统计
+func (h *AdminHandler) GetCreditRecordsStatsOverview(c *gin.Context) {
+	var req struct {
+		StartDate    string `form:"start_date"`
+		EndDate      string `form:"end_date"`
+		ExcludeAdmin bool   `form:"exclude_admin"`
+	}
+
+	if err := c.ShouldBindQuery(&req); err != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(400, "参数错误: "+err.Error()))
+		return
+	}
+
+	// 设置默认值
+	if !req.ExcludeAdmin {
+		req.ExcludeAdmin = true
+	}
+
+	// 构建基础查询
+	query := repository.DB.Model(&models.CreditRecord{})
+
+	// 排除管理员
+	if req.ExcludeAdmin {
+		query = query.Joins("LEFT JOIN users ON credit_records.user_id = users.user_id").
+			Where("users.role != ? OR users.role IS NULL", 1) // 假设 1 是管理员角色
+	}
+
+	// 日期范围
+	if req.StartDate != "" {
+		startTime, err := time.Parse("2006-01-02", req.StartDate)
+		if err == nil {
+			query = query.Where("credit_records.created_at >= ?", startTime)
+		}
+	}
+	if req.EndDate != "" {
+		endTime, err := time.Parse("2006-01-02", req.EndDate)
+		if err == nil {
+			// 设置为当天的最后一刻
+			endTime = endTime.Add(23*time.Hour + 59*time.Minute + 59*time.Second)
+			query = query.Where("credit_records.created_at <= ?", endTime)
+		}
+	}
+
+	// 总记录数
+	var totalRecords int64
+	if err := query.Count(&totalRecords).Error; err != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(500, "查询失败: "+err.Error()))
+		return
+	}
+
+	// 按类型统计
+	typeStats := make(map[string]gin.H)
+	recordTypes := []models.CreditRecordType{
+		models.CreditRecharge,
+		models.CreditConsumption,
+		models.CreditReward,
+		models.CreditExpired,
+		models.CreditRefund,
+	}
+
+	for _, recordType := range recordTypes {
+		typeQuery := query.Where("record_type = ?", int16(recordType))
+
+		var count int64
+		typeQuery.Count(&count)
+
+		var totalCredits int64
+		typeQuery.Select("COALESCE(SUM(credits), 0)").
+			Scan(&totalCredits)
+
+		typeName := ""
+		switch recordType {
+		case models.CreditRecharge:
+			typeName = "RECHARGE"
+		case models.CreditConsumption:
+			typeName = "CONSUME"
+		case models.CreditReward:
+			typeName = "REWARD"
+		case models.CreditExpired:
+			typeName = "EXPIRED"
+		case models.CreditRefund:
+			typeName = "REFUND"
+		}
+
+		typeStats[typeName] = gin.H{
+			"count":         count,
+			"total_credits": totalCredits,
+		}
+	}
+
+	// 有service_code的记录数
+	var recordsWithService int64
+	query.Where("service_code IS NOT NULL AND record_type = ?", int16(models.CreditConsumption)).
+		Count(&recordsWithService)
+
+	// 唯一用户数
+	var uniqueUserCount int64
+	repository.DB.Table("(?) as subquery", query).
+		Select("COUNT(DISTINCT user_id)").
+		Scan(&uniqueUserCount)
+
+	// 唯一服务数
+	var uniqueServiceCount int64
+	query.Where("service_code IS NOT NULL").
+		Select("COUNT(DISTINCT service_code)").
+		Scan(&uniqueServiceCount)
+
+	middleware.Success(c, "获取成功", gin.H{
+		"total_records":             totalRecords,
+		"type_stats":                typeStats,
+		"records_with_service_code": recordsWithService,
+		"unique_users":              uniqueUserCount,
+		"unique_services":           uniqueServiceCount,
+		"date_range": gin.H{
+			"start_date": req.StartDate,
+			"end_date":   req.EndDate,
+		},
+	})
+}
+
+// GetCreditServicePriceList 获取积分服务价格列表
+func (h *AdminHandler) GetCreditServicePriceList(c *gin.Context) {
+	// 使用 CRUD handler 的 List 方法
+	creditServicePriceCRUD := tools.NewCRUDHandler(tools.CRUDConfig{
+		Model:          &models.CreditServicePrice{},
+		SearchFields:   []string{"service_code"},
+		DefaultOrderBy: "created_at",
+		RequireAdmin:   true,
+		PrimaryKey:     "id",
+	}, repository.DB)
+	creditServicePriceCRUD.List(c)
 }
