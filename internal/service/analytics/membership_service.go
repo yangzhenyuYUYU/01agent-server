@@ -204,10 +204,11 @@ func (s *MembershipService) GetMembershipOverview(startDate, endDate *time.Time)
 			"JOIN user_productions up ON t.id = up.trade_id "+
 			"JOIN productions p ON up.production_id = p.id "+
 			"WHERE t.payment_status = ? "+
+			"AND t.payment_channel != ? "+
 			"AND t.trade_type != ? "+
 			"AND (p.product_type = ? OR p.product_type = ?) "+
 			"AND "+dateCondition+")",
-			append([]interface{}{"success", "activation", "订阅服务", "积分套餐"}, dateArgs...)...).
+			append([]interface{}{"success", "activation", "activation", "订阅服务", "积分套餐"}, dateArgs...)...).
 		Scan(&totalRevenueResult).Error
 
 	var totalRevenue float64
@@ -299,6 +300,7 @@ func (s *MembershipService) getMembershipStats(startDate, endDate *time.Time, lo
 		Joins("JOIN user_productions up ON t.id = up.trade_id").
 		Joins("JOIN productions p ON up.production_id = p.id").
 		Where("t.payment_status = ?", "success").
+		Where("t.payment_channel != ?", "activation").
 		Where("t.trade_type != ?", "activation").
 		Where("p.product_type = ?", "订阅服务")
 
@@ -366,6 +368,7 @@ func (s *MembershipService) getCreditPackageStats(startDate, endDate *time.Time,
 		Joins("JOIN user_productions up ON t.id = up.trade_id").
 		Joins("JOIN productions p ON up.production_id = p.id").
 		Where("t.payment_status = ?", "success").
+		Where("t.payment_channel != ?", "activation").
 		Where("t.trade_type != ?", "activation").
 		Where("p.product_type = ?", "积分套餐").
 		Where("p.name IN ?", creditPackageNames)
@@ -462,6 +465,7 @@ func (s *MembershipService) GetMembershipTrend(startDate, endDate time.Time, per
 		Joins("JOIN user_productions up ON t.id = up.trade_id").
 		Joins("JOIN productions p ON up.production_id = p.id").
 		Where("t.payment_status = ?", "success").
+		Where("t.payment_channel != ?", "activation").
 		Where("t.trade_type != ?", "activation").
 		Where("p.product_type = ?", "订阅服务").
 		Where("t.paid_at >= ? AND t.paid_at <= ?", startOfPeriod, endOfPeriod).
@@ -615,6 +619,7 @@ func (s *MembershipService) GetProductSalesTrend(startDate, endDate time.Time, p
 			Joins("JOIN user_productions up ON t.id = up.trade_id").
 			Joins("JOIN productions p ON up.production_id = p.id").
 			Where("t.payment_status = ?", "success").
+			Where("t.payment_channel != ?", "activation").
 			Where("t.trade_type != ?", "activation").
 			Where("p.product_type = ?", "订阅服务").
 			Where("t.paid_at >= ? AND t.paid_at <= ?", startOfPeriod, endOfPeriod).
@@ -682,6 +687,7 @@ func (s *MembershipService) GetProductSalesTrend(startDate, endDate time.Time, p
 			Joins("JOIN user_productions up ON t.id = up.trade_id").
 			Joins("JOIN productions p ON up.production_id = p.id").
 			Where("t.payment_status = ?", "success").
+			Where("t.payment_channel != ?", "activation").
 			Where("t.trade_type != ?", "activation").
 			Where("p.product_type = ?", "积分套餐").
 			Where("p.name IN ?", creditPackageNames).

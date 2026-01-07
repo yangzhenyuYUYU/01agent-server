@@ -234,10 +234,11 @@ func (h *AnalyticsHandler) GetPaymentOverview(c *gin.Context) {
 			"JOIN user_productions up ON t.id = up.trade_id "+
 			"JOIN productions p ON up.production_id = p.id "+
 			"WHERE t.payment_status = ? "+
+			"AND t.payment_channel != ? "+
 			"AND t.trade_type != ? "+
 			"AND (p.product_type = ? OR p.product_type = ?) "+
 			"AND t.paid_at >= ?)",
-			"success", "activation", "订阅服务", "积分套餐", minDate).
+			"success", "activation", "activation", "订阅服务", "积分套餐", minDate).
 		Scan(&totalIncome).Error; err != nil {
 		middleware.HandleError(c, middleware.NewBusinessError(500, "查询总收入失败: "+err.Error()))
 		return
@@ -253,10 +254,11 @@ func (h *AnalyticsHandler) GetPaymentOverview(c *gin.Context) {
 			"JOIN user_productions up ON t.id = up.trade_id "+
 			"JOIN productions p ON up.production_id = p.id "+
 			"WHERE t.payment_status = ? "+
+			"AND t.payment_channel != ? "+
 			"AND t.trade_type != ? "+
 			"AND (p.product_type = ? OR p.product_type = ?) "+
 			"AND t.paid_at >= ? AND t.paid_at <= ?)",
-			"success", "activation", "订阅服务", "积分套餐", start, end).
+			"success", "activation", "activation", "订阅服务", "积分套餐", start, end).
 		Scan(&periodIncome).Error; err != nil {
 		middleware.HandleError(c, middleware.NewBusinessError(500, "查询时间段收入失败: "+err.Error()))
 		return
@@ -275,10 +277,11 @@ func (h *AnalyticsHandler) GetPaymentOverview(c *gin.Context) {
 			"JOIN user_productions up ON t2.id = up.trade_id "+
 			"JOIN productions p ON up.production_id = p.id "+
 			"WHERE t2.payment_status = ? "+
+			"AND t2.payment_channel != ? "+
 			"AND t2.trade_type != ? "+
 			"AND (p.product_type = ? OR p.product_type = ?) "+
 			"AND t2.paid_at >= ? AND t2.paid_at <= ?)",
-			"success", "activation", "订阅服务", "积分套餐", start, end).
+			"success", "activation", "activation", "订阅服务", "积分套餐", start, end).
 		Group("t.payment_channel").
 		Scan(&allChannels).Error; err == nil {
 		for _, ch := range allChannels {
