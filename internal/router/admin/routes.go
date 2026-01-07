@@ -514,6 +514,7 @@ func SetupAdminRoutes(r *gin.Engine) {
 	adminAuth.Use(middleware.AdminAuth())
 	{
 		adminAuth.POST("/user_v2/list", adminHandler.UserV2List)
+		adminAuth.GET("/user_v2/:id/token", adminHandler.GetUserToken)
 	}
 
 	// 付费用户公众号信息接口（需要管理员权限）

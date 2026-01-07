@@ -1234,3 +1234,37 @@ func (h *AdminHandler) GetUserCustomSizeList(c *gin.Context) {
 		"page_size": req.PageSize,
 	})
 }
+
+// GetUserToken 获取用户token
+func (h *AdminHandler) GetUserToken(c *gin.Context) {
+	userID := c.Param("id")
+	if userID == "" {
+		middleware.HandleError(c, middleware.NewBusinessError(400, "用户ID不能为空"))
+		return
+	}
+
+	// 检查用户是否存在
+	var user models.User
+	if err := repository.DB.Where("user_id = ?", userID).First(&user).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			middleware.HandleError(c, middleware.NewBusinessError(404, "用户不存在"))
+			return
+		}
+		repository.Errorf("查询用户失败: %v", err)
+		middleware.HandleError(c, middleware.NewBusinessError(500, "查询用户失败"))
+		return
+	}
+
+	// 获取用户最近登录认证凭证token
+	var session models.UserSession
+	var token *string
+	if err := repository.DB.Where("user_id = ? AND is_active = ? AND status = ?", userID, true, 1).
+		Order("created_at DESC").First(&session).Error; err == nil {
+		token = session.Token
+	}
+
+	middleware.Success(c, "获取用户token成功", gin.H{
+		"user_id": userID,
+		"token":   token,
+	})
+}

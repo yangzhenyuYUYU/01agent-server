@@ -4,7 +4,6 @@ import (
 	"01agent_server/internal/middleware"
 	"01agent_server/internal/models"
 	"01agent_server/internal/repository"
-	"encoding/json"
 	"fmt"
 	"math/rand"
 
@@ -31,7 +30,14 @@ func (h *AdminHandler) UpdateActivate(c *gin.Context) {
 // GetActivationCodeList 获取激活码列表
 func (h *AdminHandler) GetActivationCodeList(c *gin.Context) {
 	var req struct {
-		Status *int `form:"status"` // 0-待开始, 1-进行中, 2-已结束
+		Page      int     `form:"page" binding:"min=1"`
+		PageSize  int     `form:"page_size" binding:"min=1,max=9999"`
+		Search    string  `form:"search"`          // 搜索激活码
+		CardType  *string `form:"card_type"`       // 卡片类型筛选：membership/credits
+		IsUsed    *bool   `form:"is_used"`         // 是否已使用筛选
+		ProductID *int    `form:"product_id"`      // 产品ID筛选
+		OrderBy   string  `form:"order_by"`        // 排序字段
+		OrderDir  string  `form:"order_direction"` // 排序方向：asc/desc
 	}
 
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -39,40 +45,146 @@ func (h *AdminHandler) GetActivationCodeList(c *gin.Context) {
 		return
 	}
 
-	query := repository.DB.Model(&models.MarketingActivityPlan{})
-	if req.Status != nil {
-		query = query.Where("status = ?", *req.Status)
+	// 设置默认值
+	if req.Page == 0 {
+		req.Page = 1
+	}
+	if req.PageSize == 0 {
+		req.PageSize = 20
+	}
+	if req.OrderBy == "" {
+		req.OrderBy = "created_at"
+	}
+	if req.OrderDir == "" {
+		req.OrderDir = "desc"
 	}
 
-	var activities []models.MarketingActivityPlan
-	if err := query.Order("created_at DESC").Find(&activities).Error; err != nil {
+	// 构建查询
+	query := repository.DB.Model(&models.ActivationCode{})
+
+	// 搜索激活码
+	if req.Search != "" {
+		query = query.Where("code LIKE ?", "%"+req.Search+"%")
+	}
+
+	// 卡片类型筛选
+	if req.CardType != nil && *req.CardType != "" {
+		query = query.Where("card_type = ?", *req.CardType)
+	}
+
+	// 是否已使用筛选
+	if req.IsUsed != nil {
+		query = query.Where("is_used = ?", *req.IsUsed)
+	}
+
+	// 产品ID筛选
+	if req.ProductID != nil {
+		query = query.Where("product_id = ?", *req.ProductID)
+	}
+
+	// 获取总数
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
 		middleware.HandleError(c, middleware.NewBusinessError(500, "查询失败: "+err.Error()))
 		return
 	}
 
-	// 构建返回数据
-	result := make([]gin.H, 0, len(activities))
-	for _, activity := range activities {
-		var config map[string]interface{}
-		if activity.Config != "" {
-			json.Unmarshal([]byte(activity.Config), &config)
-		}
+	// 排序
+	orderField := req.OrderBy
+	if req.OrderDir == "asc" {
+		orderField = orderField + " ASC"
+	} else {
+		orderField = orderField + " DESC"
+	}
+	query = query.Order(orderField)
 
-		result = append(result, gin.H{
-			"activity_id": activity.ActivityID,
-			"name":        activity.Name,
-			"description": activity.Description,
-			"start_time":  activity.StartTime.Format("2006-01-02T15:04:05Z07:00"),
-			"end_time":    activity.EndTime.Format("2006-01-02T15:04:05Z07:00"),
-			"status":      activity.Status,
-			"is_visible":  activity.IsVisible,
-			"config":      config,
-			"created_at":  activity.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
-			"updated_at":  activity.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
-		})
+	// 分页查询
+	offset := (req.Page - 1) * req.PageSize
+	var activationCodes []models.ActivationCode
+	if err := query.Offset(offset).Limit(req.PageSize).Find(&activationCodes).Error; err != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(500, "查询失败: "+err.Error()))
+		return
 	}
 
-	middleware.Success(c, "获取活动列表成功", result)
+	// 收集产品ID和用户ID，批量查询关联数据
+	productIDs := make([]int, 0)
+	userIDs := make([]string, 0)
+	for _, code := range activationCodes {
+		productIDs = append(productIDs, code.ProductID)
+		if code.UsedByID != nil {
+			userIDs = append(userIDs, *code.UsedByID)
+		}
+	}
+
+	// 批量查询产品信息
+	productMap := make(map[int]*models.Production)
+	if len(productIDs) > 0 {
+		var products []models.Production
+		repository.DB.Where("id IN ?", productIDs).Find(&products)
+		for i := range products {
+			productMap[products[i].ID] = &products[i]
+		}
+	}
+
+	// 批量查询用户信息
+	userMap := make(map[string]*models.User)
+	if len(userIDs) > 0 {
+		var users []models.User
+		repository.DB.Where("user_id IN ?", userIDs).Find(&users)
+		for i := range users {
+			userMap[users[i].UserID] = &users[i]
+		}
+	}
+
+	// 构建返回数据
+	result := make([]gin.H, 0, len(activationCodes))
+	for _, code := range activationCodes {
+		item := gin.H{
+			"id":         code.ID,
+			"code":       code.Code,
+			"card_type":  code.CardType,
+			"product_id": code.ProductID,
+			"is_used":    code.IsUsed,
+			"remark":     code.Remark,
+			"created_at": code.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		}
+
+		// 添加产品信息
+		if product, ok := productMap[code.ProductID]; ok {
+			item["product"] = gin.H{
+				"id":           product.ID,
+				"name":         product.Name,
+				"price":        product.Price,
+				"product_type": product.ProductType,
+			}
+		}
+
+		// 添加使用用户信息
+		if code.UsedByID != nil {
+			if user, ok := userMap[*code.UsedByID]; ok {
+				item["used_by"] = gin.H{
+					"user_id":  user.UserID,
+					"username": user.Username,
+					"phone":    user.Phone,
+					"nickname": user.Nickname,
+				}
+			}
+		}
+
+		// 添加交易信息（如果有）
+		if code.TradeID != nil {
+			item["trade_id"] = *code.TradeID
+		}
+
+		result = append(result, item)
+	}
+
+	middleware.Success(c, "获取激活码列表成功", gin.H{
+		"total":     total,
+		"items":     result,
+		"page":      req.Page,
+		"page_size": req.PageSize,
+	})
 }
 
 // generateActivationCode 生成兑换码
