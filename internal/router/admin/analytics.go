@@ -215,58 +215,79 @@ func (h *AnalyticsHandler) GetPaymentOverview(c *gin.Context) {
 		return
 	}
 
-	// 最小日期：2025-07-01
-	minDate := time.Date(2025, 7, 1, 0, 0, 0, 0, time.UTC)
+	// 最小日期：2025-07-01（统一使用CST时区）
+	loc := time.FixedZone("CST", 8*60*60)
+	minDate := time.Date(2025, 7, 1, 0, 0, 0, 0, loc)
 	if start.Before(minDate) {
 		start = minDate
 	}
 
-	// 总收入（从2025-07-01开始，只统计微信和支付宝渠道，支付成功的）
+	// 总收入（从2025-07-01开始，支付成功的，排除兑换码）
+	// 只统计会员（订阅服务）和积分套餐相关的交易，与/membership/overview保持一致
+	// 使用子查询先找到符合条件的交易ID，然后按交易去重统计，避免重复计算（一个交易可能关联多个产品）
 	var totalIncome struct {
 		Total float64
 	}
-	if err := repository.DB.Model(&models.Trade{}).
+	if err := repository.DB.Table("trades").
 		Select("COALESCE(SUM(amount), 0) as total").
-		Where("(payment_channel = ? OR payment_channel = ?) AND payment_status = ? AND paid_at >= ?",
-			"wx_qr", "alipay_qr", "success", minDate).
+		Where("id IN (SELECT DISTINCT t.id FROM trades t "+
+			"JOIN user_productions up ON t.id = up.trade_id "+
+			"JOIN productions p ON up.production_id = p.id "+
+			"WHERE t.payment_status = ? "+
+			"AND t.trade_type != ? "+
+			"AND (p.product_type = ? OR p.product_type = ?) "+
+			"AND t.paid_at >= ?)",
+			"success", "activation", "订阅服务", "积分套餐", minDate).
 		Scan(&totalIncome).Error; err != nil {
 		middleware.HandleError(c, middleware.NewBusinessError(500, "查询总收入失败: "+err.Error()))
 		return
 	}
 
-	// 时间段内收入
+	// 时间段内收入（只统计会员和积分套餐，排除兑换码）
 	var periodIncome struct {
 		Total float64
 	}
-	if err := repository.DB.Model(&models.Trade{}).
+	if err := repository.DB.Table("trades").
 		Select("COALESCE(SUM(amount), 0) as total").
-		Where("(payment_channel = ? OR payment_channel = ?) AND payment_status = ? AND paid_at >= ? AND paid_at <= ?",
-			"wx_qr", "alipay_qr", "success", start, end).
+		Where("id IN (SELECT DISTINCT t.id FROM trades t "+
+			"JOIN user_productions up ON t.id = up.trade_id "+
+			"JOIN productions p ON up.production_id = p.id "+
+			"WHERE t.payment_status = ? "+
+			"AND t.trade_type != ? "+
+			"AND (p.product_type = ? OR p.product_type = ?) "+
+			"AND t.paid_at >= ? AND t.paid_at <= ?)",
+			"success", "activation", "订阅服务", "积分套餐", start, end).
 		Scan(&periodIncome).Error; err != nil {
 		middleware.HandleError(c, middleware.NewBusinessError(500, "查询时间段收入失败: "+err.Error()))
 		return
 	}
 
-	// 各支付渠道收入占比
+	// 各支付渠道收入占比（只统计会员和积分套餐，排除兑换码）
+	// 统计所有支付渠道（排除兑换码）
 	channelStats := []gin.H{}
-	channels := []string{"wx_qr", "alipay_qr", "other"}
-	for _, channel := range channels {
-		var channelIncome struct {
-			Total float64
-		}
-		if err := repository.DB.Model(&models.Trade{}).
-			Select("COALESCE(SUM(amount), 0) as total").
-			Where("payment_status = ? AND payment_channel = ? AND paid_at >= ? AND paid_at <= ?",
-				"success", channel, start, end).
-			Scan(&channelIncome).Error; err != nil {
-			continue
-		}
-
-		if channelIncome.Total > 0 {
-			channelStats = append(channelStats, gin.H{
-				"channel": channel,
-				"amount":  channelIncome.Total,
-			})
+	var allChannels []struct {
+		Channel string
+		Total   float64
+	}
+	if err := repository.DB.Table("trades").
+		Select("t.payment_channel as channel, COALESCE(SUM(t.amount), 0) as total").
+		Where("t.id IN (SELECT DISTINCT t2.id FROM trades t2 "+
+			"JOIN user_productions up ON t2.id = up.trade_id "+
+			"JOIN productions p ON up.production_id = p.id "+
+			"WHERE t2.payment_status = ? "+
+			"AND t2.trade_type != ? "+
+			"AND (p.product_type = ? OR p.product_type = ?) "+
+			"AND t2.paid_at >= ? AND t2.paid_at <= ?)",
+			"success", "activation", "订阅服务", "积分套餐", start, end).
+		Group("t.payment_channel").
+		Scan(&allChannels).Error; err == nil {
+		for _, ch := range allChannels {
+			if ch.Total > 0 {
+				channelStats = append(channelStats, gin.H{
+					"channel": ch.Channel,
+					"amount":  ch.Total,
+				})
+			}
 		}
 	}
 

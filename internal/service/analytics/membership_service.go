@@ -164,7 +164,59 @@ func (s *MembershipService) GetMembershipOverview(startDate, endDate *time.Time)
 
 	// 计算总计数
 	totalCount := membershipCount + creditCount
-	totalRevenue := membershipRevenue + creditRevenue
+
+	// 总收入需要按交易去重统计，避免一个交易关联多个产品时重复计算
+	// 使用子查询先找到所有符合条件的交易ID，然后统计金额
+	var totalRevenueResult struct {
+		Total float64
+	}
+	minDate := time.Date(2025, 7, 1, 0, 0, 0, 0, loc)
+
+	// 构建日期条件
+	var dateCondition string
+	var dateArgs []interface{}
+	var startOfDay, endOfDay time.Time
+	if startDate != nil && endDate != nil {
+		startInLoc := startDate.In(loc)
+		startOfDay = time.Date(startInLoc.Year(), startInLoc.Month(), startInLoc.Day(), 0, 0, 0, 0, loc)
+		endInLoc := endDate.In(loc)
+		endOfDay = time.Date(endInLoc.Year(), endInLoc.Month(), endInLoc.Day(), 23, 59, 59, 999999999, loc)
+		dateCondition = "t.paid_at >= ? AND t.paid_at <= ?"
+		dateArgs = []interface{}{startOfDay, endOfDay}
+	} else if startDate != nil {
+		startInLoc := startDate.In(loc)
+		startOfDay = time.Date(startInLoc.Year(), startInLoc.Month(), startInLoc.Day(), 0, 0, 0, 0, loc)
+		dateCondition = "t.paid_at >= ?"
+		dateArgs = []interface{}{startOfDay}
+	} else if endDate != nil {
+		endInLoc := endDate.In(loc)
+		endOfDay = time.Date(endInLoc.Year(), endInLoc.Month(), endInLoc.Day(), 23, 59, 59, 999999999, loc)
+		dateCondition = "t.paid_at <= ?"
+		dateArgs = []interface{}{endOfDay}
+	} else {
+		dateCondition = "t.paid_at >= ?"
+		dateArgs = []interface{}{minDate}
+	}
+
+	totalRevenueErr := repository.DB.Table("trades").
+		Select("COALESCE(SUM(amount), 0) as total").
+		Where("id IN (SELECT DISTINCT t.id FROM trades t "+
+			"JOIN user_productions up ON t.id = up.trade_id "+
+			"JOIN productions p ON up.production_id = p.id "+
+			"WHERE t.payment_status = ? "+
+			"AND t.trade_type != ? "+
+			"AND (p.product_type = ? OR p.product_type = ?) "+
+			"AND "+dateCondition+")",
+			append([]interface{}{"success", "activation", "订阅服务", "积分套餐"}, dateArgs...)...).
+		Scan(&totalRevenueResult).Error
+
+	var totalRevenue float64
+	if totalRevenueErr == nil {
+		totalRevenue = totalRevenueResult.Total
+	} else {
+		// 如果查询失败，使用累加的方式（可能有重复计算）
+		totalRevenue = membershipRevenue + creditRevenue
+	}
 
 	// 计算占比（基于总数）
 	for i := range allProductStats {
@@ -173,30 +225,23 @@ func (s *MembershipService) GetMembershipOverview(startDate, endDate *time.Time)
 		}
 	}
 
-	// 按分类聚合（仅会员）
-	categoryMap := make(map[MembershipCategory]*MembershipStats)
+	// 扁平化处理：按产品名称展示，不再按分类聚合（仅会员）
+	// 这样轻量版、专业版的各个套餐都能单独显示在饼状图中
+	categoryStats := make([]MembershipStats, 0, len(membershipStats))
 	for _, stat := range membershipStats {
 		category := s.getCategoryByProductName(stat.ProductName)
-		if categoryMap[category] == nil {
-			categoryMap[category] = &MembershipStats{
-				Category:    category,
-				Count:       0,
-				Revenue:     0,
-				UniqueUsers: 0,
-			}
-		}
-		categoryMap[category].Count += stat.Count
-		categoryMap[category].Revenue += stat.Revenue
-		categoryMap[category].UniqueUsers += stat.UniqueUsers
-	}
-
-	// 转换为列表并计算占比（会员分类）
-	categoryStats := make([]MembershipStats, 0, len(categoryMap))
-	for _, stat := range categoryMap {
+		percentage := 0.0
 		if membershipCount > 0 {
-			stat.Percentage = float64(stat.Count) / float64(membershipCount) * 100
+			percentage = float64(stat.Count) / float64(membershipCount) * 100
 		}
-		categoryStats = append(categoryStats, *stat)
+		categoryStats = append(categoryStats, MembershipStats{
+			Category:    category,
+			ProductName: stat.ProductName,
+			Count:       stat.Count,
+			Revenue:     stat.Revenue,
+			Percentage:  percentage,
+			UniqueUsers: stat.UniqueUsers,
+		})
 	}
 
 	// 按积分套餐分类聚合（用于饼状图）
@@ -237,12 +282,13 @@ func (s *MembershipService) GetMembershipOverview(startDate, endDate *time.Time)
 }
 
 // getMembershipStats 获取会员统计数据
-// 参考GetPaymentOverview的逻辑：直接从Trade表查询，关联UserProduction和Production表
+// 参考GetPaymentOverview的逻辑：统一查询条件和时区处理
 func (s *MembershipService) getMembershipStats(startDate, endDate *time.Time, loc *time.Location) ([]MembershipStats, error) {
 	// 参考GetPaymentOverview的逻辑：
-	// 1. 直接从Trade表查询（只统计微信和支付宝渠道，支付成功的，排除兑换码兑换）
+	// 1. 直接从Trade表查询（只统计微信和支付宝渠道，支付成功的）
 	// 2. 关联UserProduction和Production表，筛选product_type = "订阅服务"
-	// 3. 使用paid_at进行日期过滤
+	// 3. 使用paid_at进行日期过滤，统一使用CST时区
+	// 注意：与GetPaymentOverview保持一致，不排除activation类型
 	baseQuery := repository.DB.Table("trades as t").
 		Select(`
 			p.name as product_name,
@@ -252,18 +298,19 @@ func (s *MembershipService) getMembershipStats(startDate, endDate *time.Time, lo
 		`).
 		Joins("JOIN user_productions up ON t.id = up.trade_id").
 		Joins("JOIN productions p ON up.production_id = p.id").
-		Where("(t.payment_channel = ? OR t.payment_channel = ?)", "wx_qr", "alipay_qr").
 		Where("t.payment_status = ?", "success").
 		Where("t.trade_type != ?", "activation").
 		Where("p.product_type = ?", "订阅服务")
 
-	// 日期范围过滤（使用paid_at）
+	// 日期范围过滤（使用paid_at，统一使用CST时区，与GetPaymentOverview保持一致）
 	if startDate != nil {
+		// 确保使用CST时区
 		startInLoc := startDate.In(loc)
 		startOfDay := time.Date(startInLoc.Year(), startInLoc.Month(), startInLoc.Day(), 0, 0, 0, 0, loc)
 		baseQuery = baseQuery.Where("t.paid_at >= ?", startOfDay)
 	}
 	if endDate != nil {
+		// 确保使用CST时区，结束时间设置为当天的23:59:59.999999999
 		endInLoc := endDate.In(loc)
 		endOfDay := time.Date(endInLoc.Year(), endInLoc.Month(), endInLoc.Day(), 23, 59, 59, 999999999, loc)
 		baseQuery = baseQuery.Where("t.paid_at <= ?", endOfDay)
@@ -299,13 +346,14 @@ func (s *MembershipService) getMembershipStats(startDate, endDate *time.Time, lo
 }
 
 // getCreditPackageStats 获取积分套餐统计数据
-// 参考GetPaymentOverview的逻辑：直接从Trade表查询，关联UserProduction和Production表
+// 参考GetPaymentOverview的逻辑：统一查询条件和时区处理
 func (s *MembershipService) getCreditPackageStats(startDate, endDate *time.Time, loc *time.Location) ([]MembershipStats, error) {
 	// 参考GetPaymentOverview的逻辑：
-	// 1. 直接从Trade表查询（只统计微信和支付宝渠道，支付成功的，排除兑换码兑换）
+	// 1. 直接从Trade表查询（只统计微信和支付宝渠道，支付成功的）
 	// 2. 关联UserProduction和Production表，筛选product_type = "积分套餐"
 	// 3. 产品名称匹配products.py中的定义（600积分、1500积分、3000积分）
-	// 4. 使用paid_at进行日期过滤
+	// 4. 使用paid_at进行日期过滤，统一使用CST时区
+	// 注意：与GetPaymentOverview保持一致，不排除activation类型
 	creditPackageNames := []string{"600积分", "1500积分", "3000积分"}
 
 	baseQuery := repository.DB.Table("trades as t").
@@ -317,19 +365,20 @@ func (s *MembershipService) getCreditPackageStats(startDate, endDate *time.Time,
 		`).
 		Joins("JOIN user_productions up ON t.id = up.trade_id").
 		Joins("JOIN productions p ON up.production_id = p.id").
-		Where("(t.payment_channel = ? OR t.payment_channel = ?)", "wx_qr", "alipay_qr").
 		Where("t.payment_status = ?", "success").
 		Where("t.trade_type != ?", "activation").
 		Where("p.product_type = ?", "积分套餐").
 		Where("p.name IN ?", creditPackageNames)
 
-	// 日期范围过滤（使用paid_at）
+	// 日期范围过滤（使用paid_at，统一使用CST时区，与GetPaymentOverview保持一致）
 	if startDate != nil {
+		// 确保使用CST时区
 		startInLoc := startDate.In(loc)
 		startOfDay := time.Date(startInLoc.Year(), startInLoc.Month(), startInLoc.Day(), 0, 0, 0, 0, loc)
 		baseQuery = baseQuery.Where("t.paid_at >= ?", startOfDay)
 	}
 	if endDate != nil {
+		// 确保使用CST时区，结束时间设置为当天的23:59:59.999999999
 		endInLoc := endDate.In(loc)
 		endOfDay := time.Date(endInLoc.Year(), endInLoc.Month(), endInLoc.Day(), 23, 59, 59, 999999999, loc)
 		baseQuery = baseQuery.Where("t.paid_at <= ?", endOfDay)
@@ -412,7 +461,6 @@ func (s *MembershipService) GetMembershipTrend(startDate, endDate time.Time, per
 		`).
 		Joins("JOIN user_productions up ON t.id = up.trade_id").
 		Joins("JOIN productions p ON up.production_id = p.id").
-		Where("(t.payment_channel = ? OR t.payment_channel = ?)", "wx_qr", "alipay_qr").
 		Where("t.payment_status = ?", "success").
 		Where("t.trade_type != ?", "activation").
 		Where("p.product_type = ?", "订阅服务").
@@ -566,7 +614,6 @@ func (s *MembershipService) GetProductSalesTrend(startDate, endDate time.Time, p
 			`).
 			Joins("JOIN user_productions up ON t.id = up.trade_id").
 			Joins("JOIN productions p ON up.production_id = p.id").
-			Where("(t.payment_channel = ? OR t.payment_channel = ?)", "wx_qr", "alipay_qr").
 			Where("t.payment_status = ?", "success").
 			Where("t.trade_type != ?", "activation").
 			Where("p.product_type = ?", "订阅服务").
@@ -634,7 +681,6 @@ func (s *MembershipService) GetProductSalesTrend(startDate, endDate time.Time, p
 			`).
 			Joins("JOIN user_productions up ON t.id = up.trade_id").
 			Joins("JOIN productions p ON up.production_id = p.id").
-			Where("(t.payment_channel = ? OR t.payment_channel = ?)", "wx_qr", "alipay_qr").
 			Where("t.payment_status = ?", "success").
 			Where("t.trade_type != ?", "activation").
 			Where("p.product_type = ?", "积分套餐").

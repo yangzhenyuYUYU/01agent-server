@@ -37,7 +37,7 @@ func (h *MembershipHandler) GetMembershipOverview(c *gin.Context) {
 	loc := time.FixedZone("CST", 8*60*60)
 	var startDate, endDate *time.Time
 
-	// 解析开始日期
+	// 解析开始日期，如果没有提供则默认为2025年7月1日（产品上线日期）
 	if startDateStr != "" {
 		parsed, err := time.ParseInLocation("2006-01-02", startDateStr, loc)
 		if err != nil {
@@ -45,16 +45,27 @@ func (h *MembershipHandler) GetMembershipOverview(c *gin.Context) {
 			return
 		}
 		startDate = &parsed
+	} else {
+		// 默认从2025年7月1日开始（产品上线日期，之前的订单都是测试数据）
+		defaultStartDate := time.Date(2025, 7, 1, 0, 0, 0, 0, loc)
+		startDate = &defaultStartDate
 	}
 
-	// 解析结束日期
+	// 解析结束日期，如果没有提供则默认为当前日期
 	if endDateStr != "" {
 		parsed, err := time.ParseInLocation("2006-01-02", endDateStr, loc)
 		if err != nil {
 			middleware.HandleError(c, middleware.NewBusinessError(400, "结束日期格式错误，请使用YYYY-MM-DD格式"))
 			return
 		}
-		endDate = &parsed
+		// 设置为当天的23:59:59
+		endOfDay := time.Date(parsed.Year(), parsed.Month(), parsed.Day(), 23, 59, 59, 0, loc)
+		endDate = &endOfDay
+	} else {
+		// 默认为当前日期
+		now := time.Now().In(loc)
+		endOfDay := time.Date(now.Year(), now.Month(), now.Day(), 23, 59, 59, 0, loc)
+		endDate = &endOfDay
 	}
 
 	// 获取概览数据
