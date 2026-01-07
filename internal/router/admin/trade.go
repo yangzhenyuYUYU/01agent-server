@@ -9,6 +9,7 @@ import (
 	"01agent_server/internal/models"
 	"01agent_server/internal/repository"
 	"01agent_server/internal/service"
+	"01agent_server/internal/tools"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -548,6 +549,7 @@ func (h *AdminHandler) RepairIncompleteTrades(c *gin.Context) {
 
 	fixList := make([]gin.H, 0)
 	benefitService := service.NewBenefitService()
+	processedUserIDs := make(map[string]bool) // 记录已处理的用户ID，避免重复清理缓存
 
 	// 处理每个 trade_no
 	for _, tradeNo := range req.TradeNos {
@@ -614,8 +616,18 @@ func (h *AdminHandler) RepairIncompleteTrades(c *gin.Context) {
 					"product_type":    product.ProductType,
 					"benefit_changes": benefitChanges,
 				})
+
+				// 记录已处理的用户ID
+				if trade.UserID != "" {
+					processedUserIDs[trade.UserID] = true
+				}
 			}
 		}
+	}
+
+	// 清理所有相关用户的 Redis 缓存（DB3）
+	for userID := range processedUserIDs {
+		tools.ClearUserCacheAsync(userID)
 	}
 
 	middleware.Success(c, "修复完成", fixList)

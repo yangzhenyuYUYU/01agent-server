@@ -40,6 +40,7 @@ func SetupAdminRoutes(r *gin.Engine) {
 		userGroup.GET("/:id/detail", adminHandler.GetUserDetail) // 用户详情（包含用户参数）
 		userGroup.POST("", userCRUD.Create)
 		userGroup.PUT("/:id", userCRUD.Update)
+		userGroup.PUT("/:id/update", userCRUD.Update) // 兼容 /update 路径
 		userGroup.DELETE("/:id", userCRUD.Delete)
 		userGroup.POST("/cancel_subscription", adminHandler.CancelUserSubscription) // 取消用户订阅
 

@@ -8,6 +8,7 @@ import (
 	"01agent_server/internal/middleware"
 	"01agent_server/internal/models"
 	"01agent_server/internal/repository"
+	"01agent_server/internal/service"
 	"01agent_server/internal/tools"
 
 	"github.com/gin-gonic/gin"
@@ -464,7 +465,7 @@ func (h *AdminHandler) UserV2List(c *gin.Context) {
 		// 获取用户最近登录认证凭证token
 		var session models.UserSession
 		var token *string
-		if err := repository.DB.Where("user_id = ? AND is_active = ?", user.UserID, true).
+		if err := repository.DB.Where("user_id = ? AND status = ? AND token IS NOT NULL", user.UserID, 1).
 			Order("created_at DESC").First(&session).Error; err == nil {
 			token = session.Token
 		}
@@ -473,6 +474,11 @@ func (h *AdminHandler) UserV2List(c *gin.Context) {
 		if user.TotalConsumption != nil {
 			totalConsumption = *user.TotalConsumption
 		}
+
+		// 获取用户总积分（包含每日、有期限、每月权益积分）
+		benefitService := service.NewBenefitService()
+		totalCreditsMap := benefitService.BatchGetTotalCredits([]string{user.UserID})
+		totalCredits := totalCreditsMap[user.UserID]
 
 		// 构建单个用户记录返回数据
 		result := []gin.H{{
@@ -485,7 +491,7 @@ func (h *AdminHandler) UserV2List(c *gin.Context) {
 			"role":              user.Role,
 			"status":            user.Status,
 			"vip_level":         user.VipLevel,
-			"credits":           float64(user.Credits),
+			"credits":           float64(totalCredits), // 使用总积分
 			"total_consumption": totalConsumption,
 			"usage_count":       user.UsageCount,
 			"payment_count":     paymentCount,
@@ -642,22 +648,42 @@ func (h *AdminHandler) UserV2List(c *gin.Context) {
 		return
 	}
 
+	// 批量获取用户总积分（性能优化）
+	benefitService := service.NewBenefitService()
+	userIDs := make([]string, len(users))
+	for i, user := range users {
+		userIDs[i] = user.UserID
+	}
+	totalCreditsMap := benefitService.BatchGetTotalCredits(userIDs)
+
+	// 批量获取用户token（性能优化）
+	userIDList := make([]string, len(users))
+	for i, user := range users {
+		userIDList[i] = user.UserID
+	}
+	var sessions []models.UserSession
+	repository.DB.Where("user_id IN ? AND status = ? AND token IS NOT NULL", userIDList, 1).
+		Order("created_at DESC").
+		Find(&sessions)
+
+	// 构建 userID -> token 映射（每个用户只取最新的一个）
+	tokenMap := make(map[string]*string)
+	for _, session := range sessions {
+		if _, exists := tokenMap[session.UserID]; !exists {
+			tokenMap[session.UserID] = session.Token
+		}
+	}
+
 	// 构建返回数据
 	result := make([]gin.H, 0, len(users))
 	for _, user := range users {
-		// 获取用户最近登录认证凭证token
-		var session models.UserSession
-		var token *string
-		if err := repository.DB.Where("user_id = ? AND is_active = ?", user.UserID, true).
-			Order("created_at DESC").First(&session).Error; err == nil {
-			tokenStr := session.Token
-			token = tokenStr
-		}
-
 		totalConsumption := 0.0
 		if user.TotalConsumption != nil {
 			totalConsumption = *user.TotalConsumption
 		}
+
+		// 获取总积分（包含每日、有期限、每月权益积分）
+		totalCredits := totalCreditsMap[user.UserID]
 
 		result = append(result, gin.H{
 			"user_id":           user.UserID,
@@ -669,8 +695,8 @@ func (h *AdminHandler) UserV2List(c *gin.Context) {
 			"role":              user.Role,
 			"status":            user.Status,
 			"vip_level":         user.VipLevel,
-			"token":             token,
-			"credits":           float64(user.Credits),
+			"token":             tokenMap[user.UserID],
+			"credits":           float64(totalCredits), // 使用总积分
 			"total_consumption": totalConsumption,
 			"usage_count":       user.UsageCount,
 			"utm_source":        user.UtmSource,
@@ -1256,15 +1282,55 @@ func (h *AdminHandler) GetUserToken(c *gin.Context) {
 	}
 
 	// 获取用户最近登录认证凭证token
-	var session models.UserSession
-	var token *string
-	if err := repository.DB.Where("user_id = ? AND is_active = ? AND status = ?", userID, true, 1).
-		Order("created_at DESC").First(&session).Error; err == nil {
-		token = session.Token
+	sessionRepo := repository.NewUserSessionRepository()
+	activeSessions, err := sessionRepo.GetActiveSessionsByUserID(userID)
+	if err != nil {
+		repository.Errorf("查询用户会话失败: %v", err)
+		middleware.HandleError(c, middleware.NewBusinessError(500, "查询用户会话失败"))
+		return
+	}
+
+	var token string
+
+	// 如果找到活跃的session，使用现有的token
+	if len(activeSessions) > 0 && activeSessions[0].Token != nil {
+		token = *activeSessions[0].Token
+	} else {
+		// 如果没有找到活跃的session，创建新的token和session
+		usernameStr := tools.GetStringValue(user.Username)
+		if usernameStr == "" {
+			usernameStr = user.UserID
+		}
+
+		// 生成token
+		generatedToken, err := tools.GenerateToken(user.UserID, usernameStr)
+		if err != nil {
+			repository.Errorf("生成token失败: %v", err)
+			middleware.HandleError(c, middleware.NewBusinessError(500, "生成token失败"))
+			return
+		}
+		token = generatedToken
+
+		// 获取客户端IP
+		ipAddress := c.ClientIP()
+
+		// 创建新的session
+		session := &models.UserSession{
+			UserID:         user.UserID,
+			Token:          tools.StringPtr(token),
+			LoginType:      "web",
+			IPAddress:      ipAddress,
+			Status:         1,
+			LastActiveTime: time.Now(),
+		}
+
+		if err := sessionRepo.Create(session); err != nil {
+			repository.Errorf("创建会话失败: %v", err)
+			// 即使创建session失败，也返回token（确保不为空）
+		}
 	}
 
 	middleware.Success(c, "获取用户token成功", gin.H{
-		"user_id": userID,
-		"token":   token,
+		"token": token,
 	})
 }

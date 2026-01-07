@@ -1,9 +1,12 @@
 package admin
 
 import (
+	"time"
+
 	"01agent_server/internal/middleware"
 	"01agent_server/internal/models"
 	"01agent_server/internal/repository"
+	"01agent_server/internal/tools"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -32,6 +35,27 @@ func (h *AdminHandler) CancelUserSubscription(c *gin.Context) {
 		}
 		middleware.HandleError(c, middleware.NewBusinessError(500, "查询用户失败: "+err.Error()))
 		return
+	}
+
+	// 检查用户最后的会员订单是否在3天内（限制取消订阅）
+	var latestTrade models.Trade
+	err := repository.DB.Model(&models.Trade{}).
+		Joins("JOIN user_productions ON trades.id = user_productions.trade_id").
+		Joins("JOIN productions ON user_productions.production_id = productions.id").
+		Where("trades.user_id = ?", req.UserID).
+		Where("trades.payment_status = ?", "success").
+		Where("trades.paid_at IS NOT NULL").
+		Where("productions.product_type = ?", "订阅服务").
+		Order("trades.paid_at DESC").
+		First(&latestTrade).Error
+
+	if err == nil && latestTrade.PaidAt != nil {
+		// 检查是否超过3天
+		threeDaysAgo := time.Now().AddDate(0, 0, -3)
+		if latestTrade.PaidAt.Before(threeDaysAgo) {
+			middleware.HandleError(c, middleware.NewBusinessError(400, "取消订阅失败：距离最后会员订单支付时间已超过3天，无法取消"))
+			return
+		}
 	}
 
 	// 查找用户所有的 UserProduction 记录
@@ -133,17 +157,7 @@ func (h *AdminHandler) CancelUserSubscription(c *gin.Context) {
 		}
 	}
 
-	// 3. 删除用户每日权益记录
-	var deletedDailyBenefitsCount int64
-	dailyBenefitResult := tx.Where("user_id = ?", req.UserID).Delete(&models.UserDailyBenefit{})
-	if dailyBenefitResult.Error != nil {
-		tx.Rollback()
-		middleware.HandleError(c, middleware.NewBusinessError(500, "删除用户每日权益记录失败: "+dailyBenefitResult.Error.Error()))
-		return
-	}
-	deletedDailyBenefitsCount = dailyBenefitResult.RowsAffected
-
-	// 4. 删除用户每月权益记录
+	// 3. 删除用户每月权益记录（不再删除每日权益记录）
 	var deletedMonthlyBenefitsCount int64
 	monthlyBenefitResult := tx.Where("user_id = ?", req.UserID).Delete(&models.UserMonthlyBenefit{})
 	if monthlyBenefitResult.Error != nil {
@@ -153,7 +167,7 @@ func (h *AdminHandler) CancelUserSubscription(c *gin.Context) {
 	}
 	deletedMonthlyBenefitsCount = monthlyBenefitResult.RowsAffected
 
-	// 5. 删除用户积分奖励记录（CreditReward 类型，且 credits 绝对值大于 500）
+	// 4. 删除用户积分奖励记录（CreditReward 类型，且 credits 绝对值大于 500）
 	var deletedCreditRecordsCount int64
 	creditRecordResult := tx.Where("user_id = ? AND record_type = ? AND (credits > 500 OR credits < -500)", req.UserID, int16(models.CreditReward)).
 		Delete(&models.CreditRecord{})
@@ -164,7 +178,7 @@ func (h *AdminHandler) CancelUserSubscription(c *gin.Context) {
 	}
 	deletedCreditRecordsCount = creditRecordResult.RowsAffected
 
-	// 6. 如果 reset_vip_level 为 true，重置用户的 VIP 等级和角色
+	// 5. 如果 reset_vip_level 为 true，重置用户的 VIP 等级和角色
 	oldVipLevel := user.VipLevel
 	oldRole := user.Role
 	if req.ResetVipLevel {
@@ -186,6 +200,9 @@ func (h *AdminHandler) CancelUserSubscription(c *gin.Context) {
 		return
 	}
 
+	// 清理用户 Redis 缓存（DB3）
+	tools.ClearUserCacheAsync(req.UserID)
+
 	// 构建返回数据
 	result := gin.H{
 		"user_id":                        user.UserID,
@@ -194,7 +211,6 @@ func (h *AdminHandler) CancelUserSubscription(c *gin.Context) {
 		"deleted_user_productions":       deletedUserProductions,
 		"deleted_trades_count":           len(trades),
 		"reset_activation_codes_count":   len(activationCodeIDs),
-		"deleted_daily_benefits_count":   deletedDailyBenefitsCount,
 		"deleted_monthly_benefits_count": deletedMonthlyBenefitsCount,
 		"deleted_credit_records_count":   deletedCreditRecordsCount,
 		"reset_vip_level":                req.ResetVipLevel,

@@ -591,3 +591,82 @@ func (s *BenefitService) getTotalCredits(userID string) int {
 func stringPtr(s string) *string {
 	return &s
 }
+
+// BatchGetTotalCredits 批量获取用户总积分（性能优化版本）
+// 返回 map[userID]totalCredits
+func (s *BenefitService) BatchGetTotalCredits(userIDs []string) map[string]int {
+	if len(userIDs) == 0 {
+		return make(map[string]int)
+	}
+
+	db := repository.GetDB()
+	now := time.Now()
+	today := time.Now()
+	todayStart := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, today.Location())
+	todayEnd := time.Date(today.Year(), today.Month(), today.Day(), 23, 59, 59, 999999999, today.Location())
+
+	result := make(map[string]int)
+
+	// 1. 批量查询用户永久积分
+	var users []models.User
+	db.Where("user_id IN ?", userIDs).Find(&users)
+	userCreditsMap := make(map[string]int)
+	for _, user := range users {
+		credits := user.Credits
+		if credits < 0 {
+			credits = 0
+		}
+		userCreditsMap[user.UserID] = credits
+		result[user.UserID] = credits // 初始化为永久积分
+	}
+
+	// 2. 批量查询每日积分（当天的）
+	var dailyBenefits []models.UserDailyBenefit
+	db.Where("user_id IN ? AND created_at >= ? AND created_at <= ?", userIDs, todayStart, todayEnd).
+		Find(&dailyBenefits)
+	for _, benefit := range dailyBenefits {
+		dailyCredits := benefit.DailyCredits
+		if dailyCredits < 0 {
+			dailyCredits = 0
+		}
+		if _, exists := result[benefit.UserID]; exists {
+			result[benefit.UserID] += dailyCredits
+		}
+	}
+
+	// 3. 批量查询有期限积分（未过期的）
+	var timedCredits []models.UserTimedCredits
+	db.Where("user_id IN ? AND credits > 0 AND expire_at > ?", userIDs, now).Find(&timedCredits)
+	timedCreditsMap := make(map[string]int)
+	for _, credit := range timedCredits {
+		timedCreditsMap[credit.UserID] += credit.Credits
+	}
+	for userID, credits := range timedCreditsMap {
+		if _, exists := result[userID]; exists {
+			result[userID] += credits
+		}
+	}
+
+	// 4. 批量查询每月权益积分（未过期的）
+	var monthlyBenefits []models.UserMonthlyBenefit
+	db.Where("user_id IN ? AND monthly_credits > 0 AND (expire_at IS NULL OR expire_at > ?)", userIDs, now).
+		Find(&monthlyBenefits)
+	monthlyCreditsMap := make(map[string]int)
+	for _, benefit := range monthlyBenefits {
+		monthlyCreditsMap[benefit.UserID] += benefit.MonthlyCredits
+	}
+	for userID, credits := range monthlyCreditsMap {
+		if _, exists := result[userID]; exists {
+			result[userID] += credits
+		}
+	}
+
+	// 确保所有用户ID都有结果（即使为0）
+	for _, userID := range userIDs {
+		if _, exists := result[userID]; !exists {
+			result[userID] = 0
+		}
+	}
+
+	return result
+}

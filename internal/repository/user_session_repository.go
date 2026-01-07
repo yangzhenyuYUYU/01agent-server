@@ -26,14 +26,14 @@ func (r *UserSessionRepository) Create(session *models.UserSession) error {
 // GetByUserID 根据用户ID获取活跃会话
 func (r *UserSessionRepository) GetByUserID(userID string) ([]models.UserSession, error) {
 	var sessions []models.UserSession
-	err := r.db.Where("user_id = ? AND is_active = ?", userID, true).Find(&sessions).Error
+	err := r.db.Where("user_id = ? AND status = ? AND token IS NOT NULL", userID, 1).Find(&sessions).Error
 	return sessions, err
 }
 
 // GetByToken 根据令牌获取会话
 func (r *UserSessionRepository) GetByToken(token string) (*models.UserSession, error) {
 	var session models.UserSession
-	err := r.db.Where("token = ? AND is_active = ?", token, true).First(&session).Error
+	err := r.db.Where("token = ? AND status = ?", token, 1).First(&session).Error
 	if err != nil {
 		return nil, err
 	}
@@ -45,15 +45,19 @@ func (r *UserSessionRepository) DeactivateByToken(token string) error {
 	return r.db.Model(&models.UserSession{}).
 		Where("token = ?", token).
 		Updates(map[string]interface{}{
-			"is_active": false,
-			"status":    0,
-			"token":     nil,
+			"status": 0,
+			"token":  nil,
 		}).Error
 }
 
 // DeactivateByUserID 停用用户的所有会话
 func (r *UserSessionRepository) DeactivateByUserID(userID string) error {
-	return r.db.Model(&models.UserSession{}).Where("user_id = ?", userID).Update("is_active", false).Error
+	return r.db.Model(&models.UserSession{}).
+		Where("user_id = ?", userID).
+		Updates(map[string]interface{}{
+			"status": 0,
+			"token":  nil,
+		}).Error
 }
 
 // DeleteExpired 删除过期会话
@@ -65,7 +69,7 @@ func (r *UserSessionRepository) DeleteExpired() error {
 func (r *UserSessionRepository) CountActiveSessionsByUserID(userID string) (int64, error) {
 	var count int64
 	err := r.db.Model(&models.UserSession{}).
-		Where("user_id = ? AND is_active = ? AND status = ?", userID, true, 1).
+		Where("user_id = ? AND status = ? AND token IS NOT NULL", userID, 1).
 		Count(&count).Error
 	return count, err
 }
@@ -73,7 +77,7 @@ func (r *UserSessionRepository) CountActiveSessionsByUserID(userID string) (int6
 // GetActiveSessionsByUserID 获取用户的活跃会话列表（按创建时间降序）
 func (r *UserSessionRepository) GetActiveSessionsByUserID(userID string) ([]models.UserSession, error) {
 	var sessions []models.UserSession
-	err := r.db.Where("user_id = ? AND is_active = ? AND status = ?", userID, true, 1).
+	err := r.db.Where("user_id = ? AND status = ? AND token IS NOT NULL", userID, 1).
 		Order("created_at DESC").
 		Find(&sessions).Error
 	return sessions, err
@@ -84,9 +88,8 @@ func (r *UserSessionRepository) DeactivateOtherSessions(userID string, currentTo
 	return r.db.Model(&models.UserSession{}).
 		Where("user_id = ? AND token != ?", userID, currentToken).
 		Updates(map[string]interface{}{
-			"is_active": false,
-			"status":    0,
-			"token":     nil,
+			"status": 0,
+			"token":  nil,
 		}).Error
 }
 
