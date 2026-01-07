@@ -8,6 +8,7 @@ import (
 	"01agent_server/internal/middleware"
 	"01agent_server/internal/models"
 	"01agent_server/internal/repository"
+	"01agent_server/internal/service"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -546,6 +547,7 @@ func (h *AdminHandler) RepairIncompleteTrades(c *gin.Context) {
 	}
 
 	fixList := make([]gin.H, 0)
+	benefitService := service.NewBenefitService()
 
 	// 处理每个 trade_no
 	for _, tradeNo := range req.TradeNos {
@@ -571,6 +573,9 @@ func (h *AdminHandler) RepairIncompleteTrades(c *gin.Context) {
 			continue
 		}
 
+		// 重新加载 trade 以获取更新后的 paid_at
+		repository.DB.First(&trade, trade.ID)
+
 		// 解析 metadata 获取产品信息
 		var metadata map[string]interface{}
 		if trade.Metadata != nil {
@@ -581,13 +586,33 @@ func (h *AdminHandler) RepairIncompleteTrades(c *gin.Context) {
 		if productID > 0 {
 			var product models.Production
 			if err := repository.DB.Where("id = ?", int(productID)).First(&product).Error; err == nil {
+				// 处理权益变更
+				benefitChanges := gin.H{}
+				if trade.User.UserID != "" {
+					user := trade.User
+					changes, err := benefitService.ProcessBenefitChanges(&user, &product, &trade)
+					if err == nil {
+						benefitChanges = gin.H{
+							"old_credits":            changes["old_credits"],
+							"new_credits":            changes["new_credits"],
+							"old_vip_level":          changes["old_vip_level"],
+							"new_vip_level":          changes["new_vip_level"],
+							"monthly_credits_issued": changes["monthly_credits_issued"],
+							"total_timed_credits":    changes["total_timed_credits"],
+							"total_monthly_credits":  changes["total_monthly_credits"],
+							"total_credits":          changes["total_credits"],
+							"changes":                changes["changes"],
+						}
+					}
+				}
+
 				fixList = append(fixList, gin.H{
 					"user_id":         trade.UserID,
 					"user_phone":      trade.User.Phone,
 					"user_name":       trade.User.Username,
 					"product_name":    product.Name,
 					"product_type":    product.ProductType,
-					"benefit_changes": gin.H{}, // 这里可以添加权益变更逻辑
+					"benefit_changes": benefitChanges,
 				})
 			}
 		}

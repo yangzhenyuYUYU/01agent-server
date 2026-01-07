@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"01agent_server/internal/middleware"
@@ -316,6 +317,8 @@ func (h *AnalyticsHandler) GetPaymentOverview(c *gin.Context) {
 }
 
 // GetPaymentTrend 获取支付趋势
+// 与/payment/overview保持一致的筛选逻辑：只统计会员和积分套餐，排除兑换码
+// 返回完整的日期列表（从start_date到end_date），即使没有数据也返回0值
 func (h *AnalyticsHandler) GetPaymentTrend(c *gin.Context) {
 	period := c.DefaultQuery("period", "day")
 	startDate := c.Query("start_date")
@@ -327,24 +330,224 @@ func (h *AnalyticsHandler) GetPaymentTrend(c *gin.Context) {
 		return
 	}
 
-	// 最小日期：2025-07-01
-	minDate := time.Date(2025, 7, 1, 0, 0, 0, 0, time.UTC)
+	// 最小日期：2025-07-01（统一使用CST时区）
+	loc := time.FixedZone("CST", 8*60*60)
+	minDate := time.Date(2025, 7, 1, 0, 0, 0, 0, loc)
 	if start.Before(minDate) {
 		start = minDate
 	}
 
-	// 查询所有符合条件的交易（微信和支付宝，支付成功）
-	var trades []models.Trade
-	if err := repository.DB.Where("(payment_channel = ? OR payment_channel = ?) AND payment_status = ? AND paid_at >= ? AND paid_at <= ?",
-		"wx_qr", "alipay_qr", "success", start, end).
-		Find(&trades).Error; err != nil {
-		middleware.HandleError(c, middleware.NewBusinessError(500, "查询交易失败: "+err.Error()))
+	// 根据period确定日期分组方式
+	var dateGroupExpr string
+	switch period {
+	case "week":
+		dateGroupExpr = "DATE_FORMAT(t.paid_at, '%Y-%u')"
+	case "month":
+		dateGroupExpr = "DATE_FORMAT(t.paid_at, '%Y-%m')"
+	default: // day
+		dateGroupExpr = "DATE(t.paid_at)"
+	}
+
+	startOfPeriod := time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, loc)
+	endOfPeriod := time.Date(end.Year(), end.Month(), end.Day(), 23, 59, 59, 999999999, loc)
+
+	// 使用goroutine并行查询多个维度的数据
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+
+	// 1. 按日期分组的统计数据
+	var trendData []struct {
+		Date        string  `gorm:"column:date"`
+		Amount      float64 `gorm:"column:amount"`
+		Count       int64   `gorm:"column:count"`
+		UniqueUsers int64   `gorm:"column:unique_users"`
+	}
+	var trendErr error
+
+	// 2. 按日期和产品名称分组的统计数据
+	var productCountsData []struct {
+		Date        string `gorm:"column:date"`
+		ProductName string `gorm:"column:product_name"`
+		Count       int64  `gorm:"column:count"`
+	}
+	var productCountsErr error
+
+	// 3. 按日期和产品类型分组的统计数据
+	var productTypeCountsData []struct {
+		Date        string `gorm:"column:date"`
+		ProductType string `gorm:"column:product_type"`
+		Count       int64  `gorm:"column:count"`
+	}
+	var productTypeCountsErr error
+
+	// 并行查询1：按日期分组的统计数据
+	// 使用子查询先找到符合条件的交易，然后按日期分组统计（避免重复计算）
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		// 使用原始SQL查询，确保日期分组和金额统计正确
+		query := `
+			SELECT 
+				` + dateGroupExpr + ` as date,
+				COALESCE(SUM(t.amount), 0) as amount,
+				COUNT(DISTINCT t.id) as count,
+				COUNT(DISTINCT t.user_id) as unique_users
+			FROM trades t
+			WHERE t.id IN (
+				SELECT DISTINCT t2.id 
+				FROM trades t2
+				JOIN user_productions up ON t2.id = up.trade_id
+				JOIN productions p ON up.production_id = p.id
+				WHERE t2.payment_status = ?
+					AND t2.payment_channel != ?
+					AND t2.trade_type != ?
+					AND (p.product_type = ? OR p.product_type = ?)
+					AND t2.paid_at >= ? AND t2.paid_at <= ?
+			)
+			GROUP BY ` + dateGroupExpr + `
+			ORDER BY date ASC
+		`
+		err := repository.DB.Raw(query,
+			"success", "activation", "activation", "订阅服务", "积分套餐", startOfPeriod, endOfPeriod).
+			Scan(&trendData).Error
+		mu.Lock()
+		trendErr = err
+		mu.Unlock()
+	}()
+
+	// 并行查询2：按日期和产品名称分组
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		err := repository.DB.Table("trades as t").
+			Select(`
+				`+dateGroupExpr+` as date,
+				p.name as product_name,
+				COUNT(DISTINCT t.id) as count
+			`).
+			Joins("JOIN user_productions up ON t.id = up.trade_id").
+			Joins("JOIN productions p ON up.production_id = p.id").
+			Where("t.payment_status = ?", "success").
+			Where("t.payment_channel != ?", "activation").
+			Where("t.trade_type != ?", "activation").
+			Where("(p.product_type = ? OR p.product_type = ?)", "订阅服务", "积分套餐").
+			Where("t.paid_at >= ? AND t.paid_at <= ?", startOfPeriod, endOfPeriod).
+			Group("date, p.name").
+			Order("date ASC, count DESC").
+			Scan(&productCountsData).Error
+		mu.Lock()
+		productCountsErr = err
+		mu.Unlock()
+	}()
+
+	// 并行查询3：按日期和产品类型分组
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		err := repository.DB.Table("trades as t").
+			Select(`
+				`+dateGroupExpr+` as date,
+				p.product_type as product_type,
+				COUNT(DISTINCT t.id) as count
+			`).
+			Joins("JOIN user_productions up ON t.id = up.trade_id").
+			Joins("JOIN productions p ON up.production_id = p.id").
+			Where("t.payment_status = ?", "success").
+			Where("t.payment_channel != ?", "activation").
+			Where("t.trade_type != ?", "activation").
+			Where("(p.product_type = ? OR p.product_type = ?)", "订阅服务", "积分套餐").
+			Where("t.paid_at >= ? AND t.paid_at <= ?", startOfPeriod, endOfPeriod).
+			Group("date, p.product_type").
+			Order("date ASC").
+			Scan(&productTypeCountsData).Error
+		mu.Lock()
+		productTypeCountsErr = err
+		mu.Unlock()
+	}()
+
+	wg.Wait()
+
+	if trendErr != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(500, "查询支付趋势失败: "+trendErr.Error()))
+		return
+	}
+	if productCountsErr != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(500, "查询产品支付数量失败: "+productCountsErr.Error()))
+		return
+	}
+	if productTypeCountsErr != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(500, "查询产品类型支付数量失败: "+productTypeCountsErr.Error()))
 		return
 	}
 
-	trendData := []gin.H{}
-	currentDate := start
+	// 规范化日期格式的辅助函数
+	normalizeDate := func(dateStr string, period string) string {
+		// 去除前后空格
+		dateStr = strings.TrimSpace(dateStr)
 
+		// 如果日期字符串包含时间部分（如 "2026-01-01 00:00:00"），只取日期部分
+		if strings.Contains(dateStr, " ") {
+			parts := strings.Split(dateStr, " ")
+			if len(parts) > 0 {
+				dateStr = parts[0]
+			}
+		}
+
+		// 对于按天统计，确保格式为 YYYY-MM-DD
+		if period == "day" {
+			if len(dateStr) >= 10 {
+				return dateStr[:10]
+			}
+		}
+
+		// 对于周和月，直接返回（格式应该已经是正确的）
+		return dateStr
+	}
+
+	// 构建数据映射（规范化日期格式）
+	trendDataMap := make(map[string]gin.H)
+	for _, data := range trendData {
+		normalizedDate := normalizeDate(data.Date, period)
+		trendDataMap[normalizedDate] = gin.H{
+			"amount":       data.Amount,
+			"count":        data.Count,
+			"unique_users": data.UniqueUsers,
+		}
+	}
+
+	productCountsMap := make(map[string][]gin.H)
+	for _, data := range productCountsData {
+		normalizedDate := normalizeDate(data.Date, period)
+		if productCountsMap[normalizedDate] == nil {
+			productCountsMap[normalizedDate] = make([]gin.H, 0)
+		}
+		productCountsMap[normalizedDate] = append(productCountsMap[normalizedDate], gin.H{
+			"product_name": data.ProductName,
+			"count":        data.Count,
+		})
+	}
+
+	productTypeCountsMap := make(map[string]gin.H)
+	for _, data := range productTypeCountsData {
+		normalizedDate := normalizeDate(data.Date, period)
+		if productTypeCountsMap[normalizedDate] == nil {
+			productTypeCountsMap[normalizedDate] = gin.H{
+				"membership_count": int64(0), // 订阅服务数量
+				"credit_count":     int64(0), // 积分套餐数量
+			}
+		}
+		ptMap := productTypeCountsMap[normalizedDate]
+		if data.ProductType == "订阅服务" {
+			ptMap["membership_count"] = data.Count
+		} else if data.ProductType == "积分套餐" {
+			ptMap["credit_count"] = data.Count
+		}
+		productTypeCountsMap[normalizedDate] = ptMap
+	}
+
+	// 生成完整的日期列表（从start到end）
+	result := make([]gin.H, 0)
+	currentDate := start
 	for currentDate.Before(end) || currentDate.Equal(end) {
 		var nextDate time.Time
 		var dateStr string
@@ -360,9 +563,9 @@ func (h *AnalyticsHandler) GetPaymentTrend(c *gin.Context) {
 				nextDate.AddDate(0, 0, -1).Format("2006-01-02"))
 		case "month":
 			if currentDate.Month() == 12 {
-				nextDate = time.Date(currentDate.Year()+1, 1, 1, 0, 0, 0, 0, currentDate.Location())
+				nextDate = time.Date(currentDate.Year()+1, 1, 1, 0, 0, 0, 0, loc)
 			} else {
-				nextDate = time.Date(currentDate.Year(), currentDate.Month()+1, 1, 0, 0, 0, 0, currentDate.Location())
+				nextDate = time.Date(currentDate.Year(), currentDate.Month()+1, 1, 0, 0, 0, 0, loc)
 			}
 			dateStr = currentDate.Format("2006-01")
 		default:
@@ -370,49 +573,46 @@ func (h *AnalyticsHandler) GetPaymentTrend(c *gin.Context) {
 			return
 		}
 
-		// 统计当前周期内的交易
-		// 参考Python代码：使用 current_date <= normalized_paid_at < next_date
-		// 统一使用本地时区（北京时间）进行比较
-		loc := currentDate.Location()
-		var amount float64
-		count := 0
-		for _, trade := range trades {
-			if trade.PaidAt != nil {
-				paidAt := *trade.PaidAt
-				// 转换为本地时区（北京时间），类似Python的normalize_datetime
-				paidAtInLoc := paidAt.In(loc)
+		// 获取该日期的数据，如果没有则使用默认值
+		dateData, hasData := trendDataMap[dateStr]
+		amount := 0.0
+		count := int64(0)
+		uniqueUsers := int64(0)
+		if hasData {
+			amount = dateData["amount"].(float64)
+			count = dateData["count"].(int64)
+			uniqueUsers = dateData["unique_users"].(int64)
+		}
 
-				// 对于按天统计，提取日期部分进行比较，避免时区问题
-				if period == "day" {
-					// 提取日期部分（年月日），忽略时分秒
-					paidAtDate := time.Date(paidAtInLoc.Year(), paidAtInLoc.Month(), paidAtInLoc.Day(), 0, 0, 0, 0, loc)
-					currentDateOnly := time.Date(currentDate.Year(), currentDate.Month(), currentDate.Day(), 0, 0, 0, 0, loc)
+		// 获取产品数量
+		productCounts := productCountsMap[dateStr]
+		if productCounts == nil {
+			productCounts = []gin.H{}
+		}
 
-					// 只比较日期是否相等
-					if paidAtDate.Equal(currentDateOnly) {
-						amount += trade.Amount
-						count++
-					}
-				} else {
-					// 对于周/月统计，使用时间范围比较：currentDate <= paidAt < nextDate
-					if (paidAtInLoc.Equal(currentDate) || paidAtInLoc.After(currentDate)) && paidAtInLoc.Before(nextDate) {
-						amount += trade.Amount
-						count++
-					}
-				}
+		// 获取产品类型数量
+		typeCounts := productTypeCountsMap[dateStr]
+		if typeCounts == nil {
+			typeCounts = gin.H{
+				"membership_count": int64(0),
+				"credit_count":     int64(0),
 			}
 		}
 
-		trendData = append(trendData, gin.H{
-			"date":   dateStr,
-			"amount": amount,
-			"count":  count,
+		result = append(result, gin.H{
+			"date":             dateStr,
+			"amount":           amount,
+			"count":            count,
+			"unique_users":     uniqueUsers,
+			"product_counts":   productCounts,
+			"membership_count": typeCounts["membership_count"],
+			"credit_count":     typeCounts["credit_count"],
 		})
 
 		currentDate = nextDate
 	}
 
-	middleware.Success(c, "获取支付趋势数据成功", trendData)
+	middleware.Success(c, "获取支付趋势数据成功", result)
 }
 
 // GetCostAnalysis 成本效益分析

@@ -26,6 +26,7 @@ type Config struct {
 	BP             BPConfig             `mapstructure:"bp"`
 	Credits        CreditsConfig        `mapstructure:"credits"`
 	VerifyCode     VerifyCodeConfig     `mapstructure:"verifyCode"`
+	Commission     CommissionConfig     `mapstructure:"commission"`
 	Themes         map[string]string    `mapstructure:"themes"`
 }
 
@@ -193,15 +194,23 @@ type BPConfig struct {
 
 // 积分配置
 type CreditsConfig struct {
-	Initial           int `mapstructure:"initial"`
-	ArticleGeneration int `mapstructure:"articleGeneration"`
-	ToCNY             int `mapstructure:"toCNY"`
+	Initial           int `mapstructure:"initial"`           // 新人注册积分
+	ArticleGeneration int `mapstructure:"articleGeneration"` // 一次文章生成消耗积分
+	ToCNY             int `mapstructure:"toCNY"`             // 积分人民币换算比例
+	DailyLoginReward  int `mapstructure:"dailyLoginReward"`  // 每日登录奖励积分
+	InvitationReward  int `mapstructure:"invitationReward"`  // 邀请互送积分
+	RegisterReward    int `mapstructure:"registerReward"`    // 注册奖励积分
 }
 
 // 验证码配置
 type VerifyCodeConfig struct {
 	Expire         int `mapstructure:"expire"`
 	ResendInterval int `mapstructure:"resendInterval"`
+}
+
+// 佣金配置
+type CommissionConfig struct {
+	Rate float64 `mapstructure:"rate"` // 佣金比例（10% = 0.10）
 }
 
 var AppConfig *Config

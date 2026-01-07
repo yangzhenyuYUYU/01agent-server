@@ -1,9 +1,11 @@
 package service
 
 import (
+	"encoding/json"
 	"fmt"
 	"time"
 
+	"01agent_server/internal/config"
 	"01agent_server/internal/models"
 	"01agent_server/internal/repository"
 
@@ -187,10 +189,13 @@ func (s *BenefitService) getOrCreateDailyBenefit(userID string) (*models.UserDai
 		First(&dailyBenefit).Error
 
 	if err == gorm.ErrRecordNotFound {
+		// 从配置获取每日积分
+		dailyCredits := config.GetDefaultDailyCredits()
+
 		// 创建当天的每日权益记录
 		dailyBenefit = models.UserDailyBenefit{
 			UserID:       userID,
-			DailyCredits: 30, // 默认每日积分
+			DailyCredits: dailyCredits,
 			CreatedAt:    time.Now(),
 			UpdatedAt:    time.Now(),
 		}
@@ -204,33 +209,12 @@ func (s *BenefitService) getOrCreateDailyBenefit(userID string) (*models.UserDai
 
 // getVipLevelByProductName 根据产品名称获取VIP等级
 func (s *BenefitService) getVipLevelByProductName(productName string) int {
-	// 根据产品名称判断VIP等级
-	if productName == "种子终身会员" {
-		return 4
-	}
-	if contains(productName, "轻量版") {
-		return 2
-	}
-	if contains(productName, "专业版") {
-		return 3
-	}
-	return 1
+	return config.GetVipLevelByProductName(productName)
 }
 
 // getStorageQuotaByVipLevel 根据VIP等级获取存储配额（字节）
 func (s *BenefitService) getStorageQuotaByVipLevel(vipLevel int) int64 {
-	// 存储配额映射：VIP等级 -> 字节数
-	quotaMap := map[int]int64{
-		0: 300 * 1024 * 1024,       // 免费版：300MB
-		1: 1 * 1024 * 1024 * 1024,  // VIP1：1GB
-		2: 5 * 1024 * 1024 * 1024,  // VIP2：5GB
-		3: 10 * 1024 * 1024 * 1024, // VIP3：10GB
-		4: 50 * 1024 * 1024 * 1024, // VIP4：50GB
-	}
-	if quota, ok := quotaMap[vipLevel]; ok {
-		return quota
-	}
-	return quotaMap[0] // 默认返回免费版配额
+	return config.GetStorageQuotaByVipLevel(vipLevel)
 }
 
 // contains 检查字符串是否包含子串
@@ -245,4 +229,365 @@ func indexOf(s, substr string) int {
 		}
 	}
 	return -1
+}
+
+// ProcessBenefitChanges 处理用户权益变更，包括积分变更和会员等级更新
+// 参考 Python 版本的 BenefitManager.process_benefit_changes
+func (s *BenefitService) ProcessBenefitChanges(user *models.User, production *models.Production, trade *models.Trade) (map[string]interface{}, error) {
+	db := repository.GetDB()
+
+	// 确保用户字段不为None，设置默认值
+	if user.Credits < 0 {
+		user.Credits = 0
+	}
+	if user.TotalConsumption == nil {
+		zero := 0.0
+		user.TotalConsumption = &zero
+	}
+
+	// 记录原始值
+	oldCredits := user.Credits
+	oldVipLevel := user.VipLevel
+	changes := []string{}
+
+	// 创建用户产品关联
+	status := "active"
+	userProduction := models.UserProduction{
+		UserID:       user.UserID,
+		ProductionID: production.ID,
+		TradeID:      trade.ID,
+		Status:       &status,
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
+	}
+	if err := db.Create(&userProduction).Error; err != nil {
+		return nil, fmt.Errorf("创建用户产品关联失败: %w", err)
+	}
+
+	// 如果是充值类型，更新总消费
+	if trade.TradeType == "recharge" {
+		if user.TotalConsumption == nil {
+			zero := 0.0
+			user.TotalConsumption = &zero
+		}
+		*user.TotalConsumption += trade.Amount
+	}
+
+	// 获取或创建用户参数
+	userParam, err := s.parametersRepo.GetByUserID(user.UserID)
+	if err != nil {
+		userParam = &models.UserParameters{
+			UserID: user.UserID,
+		}
+		s.parametersRepo.Create(userParam)
+	}
+
+	// 用于记录发放的每月权益积分
+	monthlyCreditsIssued := 0
+
+	// 根据产品类型处理权益
+	if production.ProductType == "订阅服务" {
+		// 从配置获取订阅服务产品信息
+		productConfig := config.GetSubscriptionProduct(production.Name)
+		if productConfig == nil {
+			return nil, fmt.Errorf("未找到订阅产品配置: %s", production.Name)
+		}
+
+		user.VipLevel = productConfig.VipLevel
+		userParam.StorageQuota = productConfig.StorageQuota
+		changes = append(changes, productConfig.GetChanges()...)
+
+		// 计算会员过期时间
+		var membershipExpireAt *time.Time
+		if trade.PaidAt != nil {
+			paidAt := *trade.PaidAt
+			if productConfig.ValidityMonths > 0 {
+				exp := paidAt.AddDate(0, productConfig.ValidityMonths, 0)
+				membershipExpireAt = &exp
+			} else if productConfig.ValidityMonths == -1 {
+				// 终身会员，不设过期时间
+				membershipExpireAt = nil
+			}
+		}
+
+		// 订阅服务的积分不直接加到用户积分，而是创建每月权益记录
+		monthlyCredits := productConfig.MonthlyCredits()
+		if monthlyCredits > 0 {
+			today := time.Now()
+			currentMonthStart := time.Date(today.Year(), today.Month(), 1, 0, 0, 0, 0, today.Location())
+
+			// 检查当月是否已有该订阅的权益记录
+			var existingMonthly models.UserMonthlyBenefit
+			err := db.Where("user_id = ? AND user_production_id = ? AND benefit_month = ?",
+				user.UserID, userProduction.ID, currentMonthStart).First(&existingMonthly).Error
+
+			if err == gorm.ErrRecordNotFound {
+				// 创建首月权益记录
+				monthlyBenefit := models.UserMonthlyBenefit{
+					UserID:           user.UserID,
+					UserProductionID: &userProduction.ID,
+					MonthlyCredits:   monthlyCredits,
+					BenefitMonth:     currentMonthStart,
+					ExpireAt:         membershipExpireAt,
+					CreatedAt:        time.Now(),
+					UpdatedAt:        time.Now(),
+				}
+				if err := db.Create(&monthlyBenefit).Error; err != nil {
+					return nil, fmt.Errorf("创建每月权益记录失败: %w", err)
+				}
+				monthlyCreditsIssued = monthlyCredits
+
+				// 计算记录发生后的总积分
+				userCredits := user.Credits
+				dailyBenefit, _ := s.getOrCreateDailyBenefit(user.UserID)
+				dailyCredits := dailyBenefit.DailyCredits
+				if dailyCredits < 0 {
+					dailyCredits = 0
+				}
+				allMonthlyCredits := s.getValidMonthlyCredits(user.UserID)
+				totalBalance := userCredits + dailyCredits + allMonthlyCredits
+
+				// 记录每月积分发放
+				description := fmt.Sprintf("开通会员首月权益积分发放, 获得%d积分【%s, %s】",
+					monthlyCredits, production.Name, currentMonthStart.Format("2006-01"))
+				creditRecord := models.CreditRecord{
+					UserID:      user.UserID,
+					Credits:     &monthlyCredits,
+					RecordType:  models.CreditReward,
+					Description: &description,
+					Balance:     &totalBalance,
+					ServiceCode: nil,
+					CreatedAt:   time.Now(),
+				}
+				if err := db.Create(&creditRecord).Error; err != nil {
+					return nil, fmt.Errorf("创建积分记录失败: %w", err)
+				}
+				changes = append(changes, fmt.Sprintf("首月获得%d权益积分", monthlyCredits))
+			}
+		}
+
+		// 更新用户参数
+		if err := s.parametersRepo.Update(userParam); err != nil {
+			return nil, fmt.Errorf("更新用户参数失败: %w", err)
+		}
+
+		// 更新用户角色
+		if user.Role != 0 { // 0 是管理员
+			user.Role = 2 // VIP
+			changes = append(changes, "更新为VIP用户")
+		}
+
+		// 处理终身会员库存扣减
+		if contains(production.Name, "终身") {
+			s.decreaseProductStock(production)
+		}
+
+	} else if production.ProductType == "积分套餐" {
+		// 积分套餐的积分处理，根据 production.validity_period 决定有效期
+		packageConfig := config.GetCreditPackage(production.Name)
+		if packageConfig == nil {
+			return nil, fmt.Errorf("未找到积分套餐配置: %s", production.Name)
+		}
+
+		creditsAmount := packageConfig.Credits
+		if creditsAmount > 0 {
+			changes = append(changes, packageConfig.GetChanges()...)
+			validityDays := production.ValidityPeriod
+			if validityDays != nil && *validityDays > 0 {
+				// 有期限积分
+				expireAt := time.Now().Add(time.Duration(*validityDays) * 24 * time.Hour)
+				timedCredit := models.UserTimedCredits{
+					UserID:          user.UserID,
+					Credits:         creditsAmount,
+					OriginalCredits: creditsAmount,
+					SourceType:      models.TimedCreditSourcePackage,
+					SourceDesc:      stringPtr(fmt.Sprintf("购买%s", production.Name)),
+					ExpireAt:        expireAt,
+					CreatedAt:       time.Now(),
+					UpdatedAt:       time.Now(),
+				}
+				if err := db.Create(&timedCredit).Error; err != nil {
+					return nil, fmt.Errorf("创建有期限积分记录失败: %w", err)
+				}
+
+				// 计算记录发生后的总积分
+				userCredits := user.Credits
+				dailyBenefit, _ := s.getOrCreateDailyBenefit(user.UserID)
+				dailyCredits := dailyBenefit.DailyCredits
+				if dailyCredits < 0 {
+					dailyCredits = 0
+				}
+				timedCredits := s.getValidTimedCredits(user.UserID)
+				monthlyCredits := s.getValidMonthlyCredits(user.UserID)
+				totalBalance := userCredits + dailyCredits + timedCredits + monthlyCredits
+
+				// 记录积分获得
+				description := fmt.Sprintf("购买%s, 获得%d积分（%d天有效）", production.Name, creditsAmount, *validityDays)
+				creditRecord := models.CreditRecord{
+					UserID:      user.UserID,
+					Credits:     &creditsAmount,
+					RecordType:  models.CreditRecharge,
+					Description: &description,
+					Balance:     &totalBalance,
+					ServiceCode: nil,
+					CreatedAt:   time.Now(),
+				}
+				if err := db.Create(&creditRecord).Error; err != nil {
+					return nil, fmt.Errorf("创建积分记录失败: %w", err)
+				}
+				changes = append(changes, fmt.Sprintf("获得%d积分（%d天有效）", creditsAmount, *validityDays))
+			} else {
+				// 永久积分，直接加到用户积分
+				user.Credits += creditsAmount
+
+				// 计算记录发生后的总积分
+				userCredits := user.Credits
+				dailyBenefit, _ := s.getOrCreateDailyBenefit(user.UserID)
+				dailyCredits := dailyBenefit.DailyCredits
+				if dailyCredits < 0 {
+					dailyCredits = 0
+				}
+				timedCredits := s.getValidTimedCredits(user.UserID)
+				monthlyCredits := s.getValidMonthlyCredits(user.UserID)
+				totalBalance := userCredits + dailyCredits + timedCredits + monthlyCredits
+
+				// 记录积分获得
+				description := fmt.Sprintf("购买%s, 获得%d永久积分", production.Name, creditsAmount)
+				creditRecord := models.CreditRecord{
+					UserID:      user.UserID,
+					Credits:     &creditsAmount,
+					RecordType:  models.CreditRecharge,
+					Description: &description,
+					Balance:     &totalBalance,
+					ServiceCode: nil,
+					CreatedAt:   time.Now(),
+				}
+				if err := db.Create(&creditRecord).Error; err != nil {
+					return nil, fmt.Errorf("创建积分记录失败: %w", err)
+				}
+				changes = append(changes, fmt.Sprintf("获得%d永久积分", creditsAmount))
+			}
+		}
+	}
+
+	// 保存用户更新
+	if err := s.userRepo.Update(user); err != nil {
+		return nil, fmt.Errorf("更新用户失败: %w", err)
+	}
+
+	// 获取当前各类积分
+	totalCredits := s.getTotalCredits(user.UserID)
+	timedCredits := s.getValidTimedCredits(user.UserID)
+	monthlyCredits := s.getValidMonthlyCredits(user.UserID)
+
+	// 返回变更结果
+	result := map[string]interface{}{
+		"old_credits":            oldCredits,
+		"new_credits":            user.Credits,
+		"old_vip_level":          oldVipLevel,
+		"new_vip_level":          user.VipLevel,
+		"monthly_credits_issued": monthlyCreditsIssued,
+		"total_timed_credits":    timedCredits,
+		"total_monthly_credits":  monthlyCredits,
+		"total_credits":          totalCredits,
+		"changes":                changes,
+		"user_production": map[string]interface{}{
+			"id":              userProduction.ID,
+			"product_id":      production.ID,
+			"product_name":    production.Name,
+			"product_type":    production.ProductType,
+			"validity_period": production.ValidityPeriod,
+			"extra_info":      production.ExtraInfo,
+			"created_at":      userProduction.CreatedAt.Format("2006-01-02 15:04:05"),
+		},
+	}
+
+	return result, nil
+}
+
+// 辅助方法：扣减产品库存
+func (s *BenefitService) decreaseProductStock(production *models.Production) {
+	if production.ExtraInfo == nil {
+		return
+	}
+
+	// 解析 extra_info JSON
+	var extraInfo map[string]interface{}
+	if err := json.Unmarshal([]byte(*production.ExtraInfo), &extraInfo); err != nil {
+		return
+	}
+
+	// 检查并扣减库存
+	if stock, ok := extraInfo["stock"].(float64); ok {
+		if stock > 0 {
+			extraInfo["stock"] = stock - 1
+			extraInfoJSON, err := json.Marshal(extraInfo)
+			if err == nil {
+				stockStr := string(extraInfoJSON)
+				production.ExtraInfo = &stockStr
+				db := repository.GetDB()
+				db.Model(production).Update("extra_info", stockStr)
+			}
+		}
+	}
+}
+
+// 辅助方法：获取有效的每月权益积分总额
+func (s *BenefitService) getValidMonthlyCredits(userID string) int {
+	db := repository.GetDB()
+	now := time.Now()
+
+	var monthlyBenefits []models.UserMonthlyBenefit
+	db.Where("user_id = ? AND monthly_credits > 0 AND (expire_at IS NULL OR expire_at > ?)",
+		userID, now).Find(&monthlyBenefits)
+
+	total := 0
+	for _, benefit := range monthlyBenefits {
+		total += benefit.MonthlyCredits
+	}
+	return total
+}
+
+// 辅助方法：获取有效的有期限积分总额
+func (s *BenefitService) getValidTimedCredits(userID string) int {
+	db := repository.GetDB()
+	now := time.Now()
+
+	var timedCredits []models.UserTimedCredits
+	db.Where("user_id = ? AND credits > 0 AND expire_at > ?", userID, now).Find(&timedCredits)
+
+	total := 0
+	for _, credit := range timedCredits {
+		total += credit.Credits
+	}
+	return total
+}
+
+// 辅助方法：获取总积分
+func (s *BenefitService) getTotalCredits(userID string) int {
+	user, err := s.userRepo.GetByID(userID)
+	if err != nil {
+		return 0
+	}
+
+	userCredits := user.Credits
+	if userCredits < 0 {
+		userCredits = 0
+	}
+
+	dailyBenefit, _ := s.getOrCreateDailyBenefit(userID)
+	dailyCredits := dailyBenefit.DailyCredits
+	if dailyCredits < 0 {
+		dailyCredits = 0
+	}
+
+	timedCredits := s.getValidTimedCredits(userID)
+	monthlyCredits := s.getValidMonthlyCredits(userID)
+
+	return userCredits + dailyCredits + timedCredits + monthlyCredits
+}
+
+// 辅助方法：字符串指针
+func stringPtr(s string) *string {
+	return &s
 }
