@@ -563,6 +563,10 @@ func (h *AdminHandler) RepairIncompleteTrades(c *gin.Context) {
 
 		// 如果已经是成功状态，跳过
 		if trade.PaymentStatus == "success" {
+			// 即使已经是成功状态，也记录用户ID以便清理缓存
+			if trade.UserID != "" {
+				processedUserIDs[trade.UserID] = true
+			}
 			continue
 		}
 
@@ -573,6 +577,11 @@ func (h *AdminHandler) RepairIncompleteTrades(c *gin.Context) {
 			"paid_at":        &now,
 		}).Error; err != nil {
 			continue
+		}
+
+		// 记录用户ID（订单状态已更新，需要清理缓存）
+		if trade.UserID != "" {
+			processedUserIDs[trade.UserID] = true
 		}
 
 		// 重新加载 trade 以获取更新后的 paid_at
@@ -617,10 +626,7 @@ func (h *AdminHandler) RepairIncompleteTrades(c *gin.Context) {
 					"benefit_changes": benefitChanges,
 				})
 
-				// 记录已处理的用户ID
-				if trade.UserID != "" {
-					processedUserIDs[trade.UserID] = true
-				}
+				// 用户ID已在订单状态更新时记录，这里不需要重复记录
 			}
 		}
 	}
