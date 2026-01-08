@@ -213,17 +213,33 @@ func (h *AdminHandler) AdminLogin(c *gin.Context) {
 	if len(activeSessions) > 0 {
 		existingSession = &activeSessions[0]
 		if existingSession.Token != nil {
-			// 如果存在可用的session，直接复用，更新活跃时间
-			existingSession.LastActiveTime = time.Now()
-			if err := sessionRepo.UpdateLastActiveTime(existingSession.ID); err != nil {
-				repository.Errorf("Failed to update session: %v", err)
+			// 验证token是否过期
+			expired, err := tools.IsTokenExpired(*existingSession.Token)
+			if err != nil {
+				repository.Errorf("Failed to check token expiry: %v", err)
+				// 如果检查失败，视为过期，创建新token
+				expired = true
+			}
+
+			if !expired {
+				// 如果token未过期，复用token，更新活跃时间
+				existingSession.LastActiveTime = time.Now()
+				if err := sessionRepo.UpdateLastActiveTime(existingSession.ID); err != nil {
+					repository.Errorf("Failed to update session: %v", err)
+				} else {
+					token = *existingSession.Token
+				}
 			} else {
-				token = *existingSession.Token
+				// 如果token已过期，使旧session失效
+				repository.Infof("Token expired, deactivating old session and creating new one")
+				if err := sessionRepo.DeactivateByToken(*existingSession.Token); err != nil {
+					repository.Errorf("Failed to deactivate old session: %v", err)
+				}
 			}
 		}
 	}
 
-	// 如果没有可用的session，创建新的session
+	// 如果没有可用的session或token已过期，创建新的session
 	if token == "" {
 		// 生成token
 		usernameStr := tools.GetStringValue(user.Username)

@@ -56,8 +56,12 @@ func ParseToken(tokenString string) (*Claims, error) {
 	fmt.Printf("ParseToken - Parsing token: %s\n", tokenString[:50]+"...")
 	fmt.Printf("ParseToken - Using secret: %s\n", cfg.Secret)
 
-	// 使用更严格的解析选项，明确设置验证选项
-	parser := jwt.NewParser(jwt.WithValidMethods([]string{"HS256"}), jwt.WithTimeFunc(time.Now))
+	// 使用解析选项，设置验证方法
+	// 注意：JWT库会自动验证过期时间，但我们会在后面使用容差再次检查
+	parser := jwt.NewParser(
+		jwt.WithValidMethods([]string{"HS256"}),
+		jwt.WithTimeFunc(time.Now),
+	)
 
 	token, err := parser.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
 		// 检查签名方法
@@ -92,15 +96,17 @@ func ParseToken(tokenString string) (*Claims, error) {
 			return nil, errors.New("invalid token")
 		}
 
-		// 多重检查过期时间（确保绝对安全）
+		// 多重检查过期时间（添加5秒容差，避免时钟偏差问题）
 		currentTime := time.Now()
 		if claims.ExpiresAt != nil {
 			expiryTime := claims.ExpiresAt.Time
-			fmt.Printf("ParseToken - Expiry check: token expires at %v, current time %v\n", expiryTime, currentTime)
+			// 添加5秒容差，允许轻微的时钟偏差
+			leeway := 5 * time.Second
+			fmt.Printf("ParseToken - Expiry check: token expires at %v, current time %v, leeway: %v\n", expiryTime, currentTime, leeway)
 
-			// 使用严格的时间比较，不允许任何容差
-			if expiryTime.Before(currentTime) || expiryTime.Equal(currentTime) {
-				fmt.Printf("ParseToken - Token expired! Expiry: %v, Current: %v\n", expiryTime, currentTime)
+			// 使用容差检查，避免因时钟偏差导致的误判
+			if expiryTime.Before(currentTime.Add(-leeway)) {
+				fmt.Printf("ParseToken - Token expired! Expiry: %v, Current: %v, Diff: %v\n", expiryTime, currentTime, currentTime.Sub(expiryTime))
 				return nil, errors.New("token已过期")
 			}
 		} else {
