@@ -612,6 +612,18 @@ func SetupAdminRoutes(r *gin.Engine) {
 		cacheGroup.DELETE("/delete", cacheHandler.DeleteCache)
 	}
 
+	// 配置模板管理接口（需要管理员权限）
+	configTemplateGroup := admin.Group("/config_template")
+	configTemplateGroup.Use(middleware.AdminAuth())
+	{
+		configTemplateGroup.GET("/list", adminHandler.GetConfigTemplateList)
+		configTemplateGroup.GET("/:id", adminHandler.GetConfigTemplateDetail)
+		configTemplateGroup.POST("/save", adminHandler.SaveConfigTemplate)
+		configTemplateGroup.DELETE("/:id", adminHandler.DeleteConfigTemplate)
+		configTemplateGroup.PUT("/:id/status", adminHandler.UpdateConfigTemplateStatus)
+		configTemplateGroup.POST("/:id/duplicate", adminHandler.DuplicateConfigTemplate)
+	}
+
 	// 健康检查（不需要管理员权限，用于测试）
 	admin.GET("/health", func(c *gin.Context) {
 		middleware.Success(c, "Admin API is running", gin.H{
