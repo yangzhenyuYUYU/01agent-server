@@ -223,7 +223,8 @@ func (h *BlogHandler) DeleteBlogPost(c *gin.Context) {
 func RegisterBlogRoutes(r *gin.Engine) {
 	handler := NewBlogHandler()
 
-	blog := r.Group("/v1/blog")
+	// 使用 /api/v1/blog 作为统一前缀
+	blog := r.Group("/api/v1/blog")
 	{
 		// 公开接口 - 不需要认证
 		blog.GET("/list", handler.GetBlogList)              // 文章列表

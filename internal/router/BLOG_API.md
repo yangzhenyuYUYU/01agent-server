@@ -9,7 +9,7 @@
 执行 SQL 文件创建表结构：
 
 ```bash
-mysql -u root -p 01agent < configs/blog-schema.sql
+mysql -u root -p 01agent < configs/api/v1/blog-schema.sql
 ```
 
 ## API 接口说明
@@ -30,7 +30,7 @@ mysql -u root -p 01agent < configs/blog-schema.sql
 
 ## 1. 获取博客文章列表
 
-**接口地址**: `GET /blog/list`
+**接口地址**: `GET /api/v1/blog/list`
 
 **请求参数**:
 
@@ -55,19 +55,19 @@ mysql -u root -p 01agent < configs/blog-schema.sql
 
 ```bash
 # 获取第1页，每页10条
-curl "http://localhost:8080/blog/list?page=1&page_size=10"
+curl "http://localhost:8080/api/v1/api/v1/blog/list?page=1&page_size=10"
 
 # 按分类筛选
-curl "http://localhost:8080/blog/list?category=tutorials"
+curl "http://localhost:8080/api/v1/api/v1/blog/list?category=tutorials"
 
 # 搜索关键词
-curl "http://localhost:8080/blog/list?keyword=AI"
+curl "http://localhost:8080/api/v1/api/v1/blog/list?keyword=AI"
 
 # 获取精选文章
-curl "http://localhost:8080/blog/list?is_featured=true"
+curl "http://localhost:8080/api/v1/api/v1/blog/list?is_featured=true"
 
 # 按热门排序
-curl "http://localhost:8080/blog/list?sort=popular"
+curl "http://localhost:8080/api/v1/api/v1/blog/list?sort=popular"
 ```
 
 **响应示例**:
@@ -109,7 +109,7 @@ curl "http://localhost:8080/blog/list?sort=popular"
 
 ## 2. 获取单篇文章详情
 
-**接口地址**: `GET /blog/:slug`
+**接口地址**: `GET /api/v1/blog/:slug`
 
 **路径参数**:
 
@@ -120,7 +120,7 @@ curl "http://localhost:8080/blog/list?sort=popular"
 **请求示例**:
 
 ```bash
-curl "http://localhost:8080/blog/getting-started-with-01agent"
+curl "http://localhost:8080/api/v1/api/v1/blog/getting-started-with-01agent"
 ```
 
 **响应示例**:
@@ -157,14 +157,14 @@ curl "http://localhost:8080/blog/getting-started-with-01agent"
 
 ## 3. 获取 Sitemap 数据
 
-**接口地址**: `GET /blog/sitemap`
+**接口地址**: `GET /api/v1/blog/sitemap`
 
 **说明**: 获取所有已发布文章的 URL 信息，用于生成网站地图。
 
 **请求示例**:
 
 ```bash
-curl "http://localhost:8080/blog/sitemap"
+curl "http://localhost:8080/api/v1/api/v1/blog/sitemap"
 ```
 
 **响应示例**:
@@ -192,7 +192,7 @@ curl "http://localhost:8080/blog/sitemap"
 
 ## 4. 获取相关文章推荐
 
-**接口地址**: `GET /blog/:slug/related`
+**接口地址**: `GET /api/v1/blog/:slug/related`
 
 **路径参数**:
 
@@ -209,7 +209,7 @@ curl "http://localhost:8080/blog/sitemap"
 **请求示例**:
 
 ```bash
-curl "http://localhost:8080/blog/getting-started-with-01agent/related?limit=3"
+curl "http://localhost:8080/api/v1/api/v1/blog/getting-started-with-01agent/related?limit=3"
 ```
 
 **响应示例**:
@@ -238,7 +238,7 @@ curl "http://localhost:8080/blog/getting-started-with-01agent/related?limit=3"
 
 ## 5. 增加文章浏览量
 
-**接口地址**: `POST /blog/:slug/view`
+**接口地址**: `POST /api/v1/blog/:slug/view`
 
 **说明**: 记录文章浏览量，通常在用户打开文章详情页时调用。
 
@@ -251,7 +251,7 @@ curl "http://localhost:8080/blog/getting-started-with-01agent/related?limit=3"
 **请求示例**:
 
 ```bash
-curl -X POST "http://localhost:8080/blog/getting-started-with-01agent/view"
+curl -X POST "http://localhost:8080/api/v1/api/v1/blog/getting-started-with-01agent/view"
 ```
 
 **响应示例**:
@@ -274,14 +274,14 @@ curl -X POST "http://localhost:8080/blog/getting-started-with-01agent/view"
 
 ```javascript
 // 获取精选文章（最多6篇）
-fetch('/blog/list?is_featured=true&page_size=6')
+fetch('/api/v1/blog/list?is_featured=true&page_size=6')
   .then(res => res.json())
   .then(data => {
     // 渲染精选文章
   });
 
 // 获取最新文章
-fetch('/blog/list?sort=latest&page_size=10')
+fetch('/api/v1/blog/list?sort=latest&page_size=10')
   .then(res => res.json())
   .then(data => {
     // 渲染最新文章列表
@@ -292,7 +292,7 @@ fetch('/blog/list?sort=latest&page_size=10')
 
 ```javascript
 // 获取特定分类的文章
-fetch('/blog/list?category=tutorials&page=1&page_size=12')
+fetch('/api/v1/blog/list?category=tutorials&page=1&page_size=12')
   .then(res => res.json())
   .then(data => {
     // 渲染分类文章列表
@@ -303,7 +303,7 @@ fetch('/blog/list?category=tutorials&page=1&page_size=12')
 
 ```javascript
 // 获取文章详情
-fetch('/blog/getting-started-with-01agent')
+fetch('/api/v1/blog/getting-started-with-01agent')
   .then(res => res.json())
   .then(data => {
     const post = data.data;
@@ -311,10 +311,10 @@ fetch('/blog/getting-started-with-01agent')
     renderMarkdown(post.content);
     
     // 记录浏览量
-    fetch(`/blog/${post.slug}/view`, { method: 'POST' });
+    fetch(`/api/v1/blog/${post.slug}/view`, { method: 'POST' });
     
     // 获取相关推荐
-    fetch(`/blog/${post.slug}/related?limit=3`)
+    fetch(`/api/v1/blog/${post.slug}/related?limit=3`)
       .then(res => res.json())
       .then(data => {
         // 渲染相关文章
@@ -327,7 +327,7 @@ fetch('/blog/getting-started-with-01agent')
 ```javascript
 // 搜索文章
 const keyword = '快速入门';
-fetch(`/blog/list?keyword=${encodeURIComponent(keyword)}`)
+fetch(`/api/v1/blog/list?keyword=${encodeURIComponent(keyword)}`)
   .then(res => res.json())
   .then(data => {
     // 渲染搜索结果
@@ -414,19 +414,19 @@ go run main.go
 
 ```bash
 # 测试列表接口
-curl "http://localhost:8080/blog/list"
+curl "http://localhost:8080/api/v1/api/v1/blog/list"
 
 # 测试详情接口
-curl "http://localhost:8080/blog/getting-started-with-01agent"
+curl "http://localhost:8080/api/v1/api/v1/blog/getting-started-with-01agent"
 
 # 测试sitemap
-curl "http://localhost:8080/blog/sitemap"
+curl "http://localhost:8080/api/v1/api/v1/blog/sitemap"
 
 # 测试相关文章
-curl "http://localhost:8080/blog/getting-started-with-01agent/related"
+curl "http://localhost:8080/api/v1/api/v1/blog/getting-started-with-01agent/related"
 
 # 测试浏览量统计
-curl -X POST "http://localhost:8080/blog/getting-started-with-01agent/view"
+curl -X POST "http://localhost:8080/api/v1/api/v1/blog/getting-started-with-01agent/view"
 ```
 
 ---
