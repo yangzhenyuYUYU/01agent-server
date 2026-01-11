@@ -207,13 +207,100 @@ func (r *BlogRepository) GetSitemapData() ([]map[string]interface{}, error) {
 }
 
 // CreateBlogPost 创建博客文章
-func (r *BlogRepository) CreateBlogPost(post *models.BlogPost) error {
-	return r.db.Create(post).Error
+func (r *BlogRepository) CreateBlogPost(post *models.BlogPost, tags []string, seoKeywords []string) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		// 1. 创建文章
+		if err := tx.Create(post).Error; err != nil {
+			return fmt.Errorf("create blog post failed: %w", err)
+		}
+
+		// 2. 处理标签
+		if len(tags) > 0 {
+			for _, tagName := range tags {
+				tag, err := r.GetOrCreateTag(tagName)
+				if err != nil {
+					return fmt.Errorf("get or create tag failed: %w", err)
+				}
+
+				// 关联标签
+				if err := tx.Create(&models.BlogPostTag{
+					PostID: post.ID,
+					TagID:  tag.ID,
+				}).Error; err != nil {
+					return fmt.Errorf("create post tag relation failed: %w", err)
+				}
+			}
+		}
+
+		// 3. 处理SEO关键词
+		if len(seoKeywords) > 0 {
+			for _, keyword := range seoKeywords {
+				if err := tx.Create(&models.BlogSEOKeyword{
+					PostID:  post.ID,
+					Keyword: keyword,
+				}).Error; err != nil {
+					return fmt.Errorf("create seo keyword failed: %w", err)
+				}
+			}
+		}
+
+		return nil
+	})
 }
 
 // UpdateBlogPost 更新博客文章
-func (r *BlogRepository) UpdateBlogPost(post *models.BlogPost) error {
-	return r.db.Save(post).Error
+func (r *BlogRepository) UpdateBlogPost(postID string, updates map[string]interface{}, tags []string, seoKeywords []string) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		// 1. 更新文章基本信息
+		if len(updates) > 0 {
+			if err := tx.Model(&models.BlogPost{}).Where("id = ?", postID).Updates(updates).Error; err != nil {
+				return fmt.Errorf("update blog post failed: %w", err)
+			}
+		}
+
+		// 2. 更新标签（如果提供了新标签）
+		if tags != nil {
+			// 删除旧的标签关联
+			if err := tx.Where("post_id = ?", postID).Delete(&models.BlogPostTag{}).Error; err != nil {
+				return fmt.Errorf("delete old post tags failed: %w", err)
+			}
+
+			// 添加新的标签关联
+			for _, tagName := range tags {
+				tag, err := r.GetOrCreateTag(tagName)
+				if err != nil {
+					return fmt.Errorf("get or create tag failed: %w", err)
+				}
+
+				if err := tx.Create(&models.BlogPostTag{
+					PostID: postID,
+					TagID:  tag.ID,
+				}).Error; err != nil {
+					return fmt.Errorf("create post tag relation failed: %w", err)
+				}
+			}
+		}
+
+		// 3. 更新SEO关键词（如果提供了新关键词）
+		if seoKeywords != nil {
+			// 删除旧的关键词
+			if err := tx.Where("post_id = ?", postID).Delete(&models.BlogSEOKeyword{}).Error; err != nil {
+				return fmt.Errorf("delete old seo keywords failed: %w", err)
+			}
+
+			// 添加新的关键词
+			for _, keyword := range seoKeywords {
+				if err := tx.Create(&models.BlogSEOKeyword{
+					PostID:  postID,
+					Keyword: keyword,
+				}).Error; err != nil {
+					return fmt.Errorf("create seo keyword failed: %w", err)
+				}
+			}
+		}
+
+		return nil
+	})
 }
 
 // DeleteBlogPost 删除博客文章

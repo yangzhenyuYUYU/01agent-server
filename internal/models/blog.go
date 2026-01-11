@@ -83,6 +83,41 @@ var CategoryNames = map[string]string{
 	"case-studies":      "案例故事",
 }
 
+// BlogCreateRequest 创建博客文章请求
+type BlogCreateRequest struct {
+	Slug           string   `json:"slug" binding:"required" description:"URL友好的标识符"`
+	Title          string   `json:"title" binding:"required" description:"文章标题"`
+	Summary        string   `json:"summary" binding:"required" description:"文章摘要"`
+	Content        string   `json:"content" binding:"required" description:"Markdown格式的正文"`
+	Category       string   `json:"category" binding:"required" description:"分类"`
+	CoverImage     *string  `json:"cover_image" description:"封面图URL"`
+	Author         string   `json:"author" description:"作者"`
+	AuthorAvatar   *string  `json:"author_avatar" description:"作者头像URL"`
+	ReadTime       *int     `json:"read_time" description:"阅读时间（分钟）"`
+	IsFeatured     bool     `json:"is_featured" description:"是否精选"`
+	SEODescription *string  `json:"seo_description" description:"SEO描述"`
+	Status         string   `json:"status" description:"状态: draft/published/archived"`
+	Tags           []string `json:"tags" description:"标签列表"`
+	SEOKeywords    []string `json:"seo_keywords" description:"SEO关键词列表"`
+}
+
+// BlogUpdateRequest 更新博客文章请求
+type BlogUpdateRequest struct {
+	Title          *string  `json:"title" description:"文章标题"`
+	Summary        *string  `json:"summary" description:"文章摘要"`
+	Content        *string  `json:"content" description:"Markdown格式的正文"`
+	Category       *string  `json:"category" description:"分类"`
+	CoverImage     *string  `json:"cover_image" description:"封面图URL"`
+	Author         *string  `json:"author" description:"作者"`
+	AuthorAvatar   *string  `json:"author_avatar" description:"作者头像URL"`
+	ReadTime       *int     `json:"read_time" description:"阅读时间（分钟）"`
+	IsFeatured     *bool    `json:"is_featured" description:"是否精选"`
+	SEODescription *string  `json:"seo_description" description:"SEO描述"`
+	Status         *string  `json:"status" description:"状态"`
+	Tags           []string `json:"tags" description:"标签列表"`
+	SEOKeywords    []string `json:"seo_keywords" description:"SEO关键词列表"`
+}
+
 // BlogPostResponse 博客文章响应结构
 type BlogPostResponse struct {
 	ID             string     `json:"id"`
@@ -104,6 +139,7 @@ type BlogPostResponse struct {
 	Tags           []string   `json:"tags"`
 	SEOKeywords    []string   `json:"seo_keywords,omitempty"`
 	SEODescription *string    `json:"seo_description,omitempty"`
+	Status         string     `json:"status"`
 }
 
 // ToResponse 转换为响应结构
@@ -131,6 +167,7 @@ func (bp *BlogPost) ToResponse(includeContent bool) *BlogPostResponse {
 		IsFeatured:   bp.IsFeatured,
 		Tags:         []string{},
 		SEOKeywords:  []string{},
+		Status:       bp.Status,
 	}
 
 	if includeContent {

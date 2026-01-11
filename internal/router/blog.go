@@ -4,6 +4,7 @@ import (
 	"strconv"
 
 	"01agent_server/internal/middleware"
+	"01agent_server/internal/models"
 	"01agent_server/internal/repository"
 	"01agent_server/internal/service"
 
@@ -155,17 +156,85 @@ func (h *BlogHandler) IncrementViews(c *gin.Context) {
 	middleware.Success(c, "success", nil)
 }
 
+// CreateBlogPost 创建博客文章
+// POST /blog/create
+func (h *BlogHandler) CreateBlogPost(c *gin.Context) {
+	var req models.BlogCreateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(400, "参数错误: "+err.Error()))
+		return
+	}
+
+	post, err := h.blogService.CreateBlogPost(&req)
+	if err != nil {
+		repository.Errorf("CreateBlogPost failed: %v", err)
+		middleware.HandleError(c, middleware.NewBusinessError(500, "创建文章失败: "+err.Error()))
+		return
+	}
+
+	middleware.Success(c, "创建成功", post)
+}
+
+// UpdateBlogPost 更新博客文章
+// PUT /blog/:id
+func (h *BlogHandler) UpdateBlogPost(c *gin.Context) {
+	postID := c.Param("id")
+	if postID == "" {
+		middleware.HandleError(c, middleware.NewBusinessError(400, "文章ID不能为空"))
+		return
+	}
+
+	var req models.BlogUpdateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(400, "参数错误: "+err.Error()))
+		return
+	}
+
+	post, err := h.blogService.UpdateBlogPost(postID, &req)
+	if err != nil {
+		repository.Errorf("UpdateBlogPost failed: %v", err)
+		middleware.HandleError(c, middleware.NewBusinessError(500, "更新文章失败: "+err.Error()))
+		return
+	}
+
+	middleware.Success(c, "更新成功", post)
+}
+
+// DeleteBlogPost 删除博客文章
+// DELETE /blog/:id
+func (h *BlogHandler) DeleteBlogPost(c *gin.Context) {
+	postID := c.Param("id")
+	if postID == "" {
+		middleware.HandleError(c, middleware.NewBusinessError(400, "文章ID不能为空"))
+		return
+	}
+
+	err := h.blogService.DeleteBlogPost(postID)
+	if err != nil {
+		repository.Errorf("DeleteBlogPost failed: %v", err)
+		middleware.HandleError(c, middleware.NewBusinessError(500, "删除文章失败: "+err.Error()))
+		return
+	}
+
+	middleware.Success(c, "删除成功", nil)
+}
+
 // RegisterBlogRoutes 注册博客路由
 func RegisterBlogRoutes(r *gin.Engine) {
 	handler := NewBlogHandler()
 
-	blog := r.Group("/blog")
+	blog := r.Group("/v1/blog")
 	{
 		// 公开接口 - 不需要认证
 		blog.GET("/list", handler.GetBlogList)              // 文章列表
 		blog.GET("/sitemap", handler.GetSitemap)            // Sitemap数据
-		blog.GET("/:slug/related", handler.GetRelatedPosts) // 相关文章（必须在 /post/:slug 之前）
+		blog.GET("/:slug/related", handler.GetRelatedPosts) // 相关文章（必须在 /:slug 之前）
 		blog.POST("/:slug/view", handler.IncrementViews)    // 浏览量统计
 		blog.GET("/:slug", handler.GetBlogPost)             // 文章详情（放在最后，作为兜底路由）
+
+		// 管理接口 - 需要认证（后续可添加JWT中间件）
+		blog.POST("/create", handler.CreateBlogPost) // 创建文章
+		blog.PUT("/:id", handler.UpdateBlogPost)     // 更新文章
+		blog.DELETE("/:id", handler.DeleteBlogPost)  // 删除文章
 	}
 }

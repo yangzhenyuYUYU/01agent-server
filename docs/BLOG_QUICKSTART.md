@@ -116,6 +116,8 @@ scripts/
 
 ## API 接口一览
 
+### 公开接口（无需认证）
+
 | 接口 | 方法 | 说明 |
 |------|------|------|
 | `/blog/list` | GET | 获取文章列表 |
@@ -124,7 +126,17 @@ scripts/
 | `/blog/:slug/related` | GET | 获取相关文章 |
 | `/blog/:slug/view` | POST | 增加浏览量 |
 
-详细的接口文档请查看 [`internal/router/BLOG_API.md`](./internal/router/BLOG_API.md)
+### 管理接口（需要认证）
+
+| 接口 | 方法 | 说明 |
+|------|------|------|
+| `/blog/create` | POST | 创建文章 |
+| `/blog/:id` | PUT | 更新文章 |
+| `/blog/:id` | DELETE | 删除文章 |
+
+详细的接口文档：
+- 公开接口文档：[`internal/router/BLOG_API.md`](../internal/router/BLOG_API.md)
+- 管理接口文档：[`internal/router/BLOG_ADMIN_API.md`](../internal/router/BLOG_ADMIN_API.md)
 
 ## 数据模型
 

@@ -3,9 +3,12 @@ package service
 import (
 	"fmt"
 	"math"
+	"time"
 
 	"01agent_server/internal/models"
 	"01agent_server/internal/repository"
+
+	"github.com/google/uuid"
 )
 
 type BlogService struct {
@@ -101,17 +104,150 @@ func (s *BlogService) GetSitemapData() ([]map[string]interface{}, error) {
 }
 
 // CreateBlogPost 创建博客文章
-func (s *BlogService) CreateBlogPost(post *models.BlogPost) error {
-	return s.repo.CreateBlogPost(post)
+func (s *BlogService) CreateBlogPost(req *models.BlogCreateRequest) (*models.BlogPostResponse, error) {
+	// 参数验证
+	if req.Slug == "" || req.Title == "" || req.Summary == "" || req.Content == "" {
+		return nil, fmt.Errorf("slug, title, summary and content are required")
+	}
+
+	// 验证分类
+	if _, ok := models.CategoryNames[req.Category]; !ok {
+		return nil, fmt.Errorf("invalid category: %s", req.Category)
+	}
+
+	// 验证状态
+	if req.Status == "" {
+		req.Status = models.BlogStatusPublished
+	}
+	if req.Status != models.BlogStatusDraft &&
+		req.Status != models.BlogStatusPublished &&
+		req.Status != models.BlogStatusArchived {
+		return nil, fmt.Errorf("invalid status: %s", req.Status)
+	}
+
+	// 设置默认值
+	if req.Author == "" {
+		req.Author = "01Agent Team"
+	}
+
+	// 创建文章对象
+	post := &models.BlogPost{
+		ID:             uuid.New().String(),
+		Slug:           req.Slug,
+		Title:          req.Title,
+		Summary:        req.Summary,
+		Content:        req.Content,
+		Category:       req.Category,
+		CoverImage:     req.CoverImage,
+		Author:         req.Author,
+		AuthorAvatar:   req.AuthorAvatar,
+		PublishDate:    time.Now(),
+		ReadTime:       req.ReadTime,
+		IsFeatured:     req.IsFeatured,
+		SEODescription: req.SEODescription,
+		Status:         req.Status,
+	}
+
+	// 创建文章（包含标签和SEO关键词）
+	err := s.repo.CreateBlogPost(post, req.Tags, req.SEOKeywords)
+	if err != nil {
+		return nil, fmt.Errorf("create blog post failed: %w", err)
+	}
+
+	// 重新获取完整数据（包含关联的标签）
+	createdPost, err := s.repo.GetBlogByID(post.ID)
+	if err != nil {
+		return nil, fmt.Errorf("get created post failed: %w", err)
+	}
+
+	// 加载SEO关键词
+	createdPost.SEOKeywords = req.SEOKeywords
+
+	return createdPost.ToResponse(true), nil
 }
 
 // UpdateBlogPost 更新博客文章
-func (s *BlogService) UpdateBlogPost(post *models.BlogPost) error {
-	return s.repo.UpdateBlogPost(post)
+func (s *BlogService) UpdateBlogPost(postID string, req *models.BlogUpdateRequest) (*models.BlogPostResponse, error) {
+	// 检查文章是否存在
+	existingPost, err := s.repo.GetBlogByID(postID)
+	if err != nil {
+		return nil, fmt.Errorf("post not found: %w", err)
+	}
+	if existingPost == nil {
+		return nil, fmt.Errorf("post not found")
+	}
+
+	// 构建更新数据
+	updates := make(map[string]interface{})
+
+	if req.Title != nil {
+		updates["title"] = *req.Title
+	}
+	if req.Summary != nil {
+		updates["summary"] = *req.Summary
+	}
+	if req.Content != nil {
+		updates["content"] = *req.Content
+	}
+	if req.Category != nil {
+		// 验证分类
+		if _, ok := models.CategoryNames[*req.Category]; !ok {
+			return nil, fmt.Errorf("invalid category: %s", *req.Category)
+		}
+		updates["category"] = *req.Category
+	}
+	if req.CoverImage != nil {
+		updates["cover_image"] = *req.CoverImage
+	}
+	if req.Author != nil {
+		updates["author"] = *req.Author
+	}
+	if req.AuthorAvatar != nil {
+		updates["author_avatar"] = *req.AuthorAvatar
+	}
+	if req.ReadTime != nil {
+		updates["read_time"] = *req.ReadTime
+	}
+	if req.IsFeatured != nil {
+		updates["is_featured"] = *req.IsFeatured
+	}
+	if req.SEODescription != nil {
+		updates["seo_description"] = *req.SEODescription
+	}
+	if req.Status != nil {
+		// 验证状态
+		if *req.Status != models.BlogStatusDraft &&
+			*req.Status != models.BlogStatusPublished &&
+			*req.Status != models.BlogStatusArchived {
+			return nil, fmt.Errorf("invalid status: %s", *req.Status)
+		}
+		updates["status"] = *req.Status
+	}
+
+	// 设置更新时间
+	updates["updated_date"] = time.Now()
+
+	// 执行更新
+	err = s.repo.UpdateBlogPost(postID, updates, req.Tags, req.SEOKeywords)
+	if err != nil {
+		return nil, fmt.Errorf("update blog post failed: %w", err)
+	}
+
+	// 重新获取更新后的数据
+	updatedPost, err := s.repo.GetBlogByID(postID)
+	if err != nil {
+		return nil, fmt.Errorf("get updated post failed: %w", err)
+	}
+
+	// 加载SEO关键词
+	if req.SEOKeywords != nil {
+		updatedPost.SEOKeywords = req.SEOKeywords
+	}
+
+	return updatedPost.ToResponse(true), nil
 }
 
 // DeleteBlogPost 删除博客文章
 func (s *BlogService) DeleteBlogPost(id string) error {
 	return s.repo.DeleteBlogPost(id)
 }
-
