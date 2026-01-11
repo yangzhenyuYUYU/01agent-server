@@ -247,7 +247,77 @@ func (s *BlogService) UpdateBlogPost(postID string, req *models.BlogUpdateReques
 	return updatedPost.ToResponse(true), nil
 }
 
+// GetBlogByID 通过ID获取博客文章
+func (s *BlogService) GetBlogByID(id string) (*models.BlogPostResponse, error) {
+	post, err := s.repo.GetBlogByID(id)
+	if err != nil {
+		return nil, err
+	}
+	if post == nil {
+		return nil, fmt.Errorf("blog post not found")
+	}
+
+	return post.ToResponse(true), nil
+}
+
 // DeleteBlogPost 删除博客文章
 func (s *BlogService) DeleteBlogPost(id string) error {
 	return s.repo.DeleteBlogPost(id)
+}
+
+// GetBlogStats 获取博客统计信息
+func (s *BlogService) GetBlogStats() (map[string]interface{}, error) {
+	db := s.repo.GetDB()
+
+	stats := make(map[string]interface{})
+
+	// 总文章数
+	var total int64
+	db.Model(&models.BlogPost{}).Count(&total)
+	stats["total"] = total
+
+	// 已发布文章数
+	var published int64
+	db.Model(&models.BlogPost{}).Where("status = ?", models.BlogStatusPublished).Count(&published)
+	stats["published"] = published
+
+	// 草稿数
+	var draft int64
+	db.Model(&models.BlogPost{}).Where("status = ?", models.BlogStatusDraft).Count(&draft)
+	stats["draft"] = draft
+
+	// 已归档文章数
+	var archived int64
+	db.Model(&models.BlogPost{}).Where("status = ?", models.BlogStatusArchived).Count(&archived)
+	stats["archived"] = archived
+
+	// 精选文章数
+	var featured int64
+	db.Model(&models.BlogPost{}).Where("is_featured = ?", true).Count(&featured)
+	stats["featured"] = featured
+
+	// 总浏览量
+	var totalViews int64
+	db.Model(&models.BlogPost{}).Select("COALESCE(SUM(views), 0)").Scan(&totalViews)
+	stats["total_views"] = totalViews
+
+	// 总点赞数
+	var totalLikes int64
+	db.Model(&models.BlogPost{}).Select("COALESCE(SUM(likes), 0)").Scan(&totalLikes)
+	stats["total_likes"] = totalLikes
+
+	// 分类统计
+	var categoryStats []map[string]interface{}
+	db.Model(&models.BlogPost{}).
+		Select("category, COUNT(*) as count").
+		Group("category").
+		Scan(&categoryStats)
+	stats["by_category"] = categoryStats
+
+	// 标签总数
+	var totalTags int64
+	db.Model(&models.BlogTag{}).Count(&totalTags)
+	stats["total_tags"] = totalTags
+
+	return stats, nil
 }

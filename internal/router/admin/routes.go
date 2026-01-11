@@ -21,6 +21,9 @@ func NewAdminHandler() *AdminHandler {
 
 // SetupAdminRoutes 设置管理员路由
 func SetupAdminRoutes(r *gin.Engine) {
+	// 注册博客管理路由
+	SetupBlogAdminRoutes(r)
+
 	admin := r.Group("/api/v1/admin")
 	adminHandler := NewAdminHandler()
 

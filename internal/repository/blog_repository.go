@@ -19,6 +19,11 @@ func NewBlogRepository() *BlogRepository {
 	}
 }
 
+// GetDB 获取数据库连接（用于service层的统计查询）
+func (r *BlogRepository) GetDB() *gorm.DB {
+	return r.db
+}
+
 // BlogListParams 博客列表查询参数
 type BlogListParams struct {
 	Page       int
@@ -28,6 +33,7 @@ type BlogListParams struct {
 	Keyword    string
 	IsFeatured *bool
 	Sort       string // latest, popular, views
+	Status     string // 状态筛选（管理后台使用）
 }
 
 // GetBlogList 获取博客列表
@@ -40,8 +46,14 @@ func (r *BlogRepository) GetBlogList(params BlogListParams) ([]models.BlogPost, 
 	// 构建查询
 	query := r.db.Model(&models.BlogPost{})
 
-	// 基础条件：只查询已发布的文章
-	query = query.Where("status = ?", models.BlogStatusPublished)
+	// 基础条件：状态筛选
+	if params.Status != "" {
+		// 管理后台可以指定状态
+		query = query.Where("status = ?", params.Status)
+	} else {
+		// 前台只查询已发布的文章
+		query = query.Where("status = ?", models.BlogStatusPublished)
+	}
 
 	// 分类筛选
 	if params.Category != "" {
