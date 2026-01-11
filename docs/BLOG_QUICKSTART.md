@@ -73,22 +73,22 @@ scripts\test_blog_api.bat
 
 ```bash
 # 获取博客列表
-curl "http://localhost:8080/blog/list"
+curl "http://localhost:8080/api/v1/blog/list"
 
 # 获取文章详情
-curl "http://localhost:8080/blog/getting-started-with-01agent"
+curl "http://localhost:8080/api/v1/blog/getting-started-with-01agent"
 
 # 获取精选文章
-curl "http://localhost:8080/blog/list?is_featured=true"
+curl "http://localhost:8080/api/v1/blog/list?is_featured=true"
 
 # 搜索文章
-curl "http://localhost:8080/blog/list?keyword=快速"
+curl "http://localhost:8080/api/v1/blog/list?keyword=快速"
 
 # 获取相关文章
-curl "http://localhost:8080/blog/getting-started-with-01agent/related"
+curl "http://localhost:8080/api/v1/blog/getting-started-with-01agent/related"
 
 # 增加浏览量
-curl -X POST "http://localhost:8080/blog/getting-started-with-01agent/view"
+curl -X POST "http://localhost:8080/api/v1/blog/getting-started-with-01agent/view"
 ```
 
 ## 文件结构
@@ -120,19 +120,19 @@ scripts/
 
 | 接口 | 方法 | 说明 |
 |------|------|------|
-| `/blog/list` | GET | 获取文章列表 |
-| `/blog/:slug` | GET | 获取文章详情 |
-| `/blog/sitemap` | GET | 获取sitemap数据 |
-| `/blog/:slug/related` | GET | 获取相关文章 |
-| `/blog/:slug/view` | POST | 增加浏览量 |
+| `/api/v1/blog/list` | GET | 获取文章列表 |
+| `/api/v1/blog/:slug` | GET | 获取文章详情 |
+| `/api/v1/blog/sitemap` | GET | 获取sitemap数据 |
+| `/api/v1/blog/:slug/related` | GET | 获取相关文章 |
+| `/api/v1/blog/:slug/view` | POST | 增加浏览量 |
 
 ### 管理接口（需要认证）
 
 | 接口 | 方法 | 说明 |
 |------|------|------|
-| `/blog/create` | POST | 创建文章 |
-| `/blog/:id` | PUT | 更新文章 |
-| `/blog/:id` | DELETE | 删除文章 |
+| `/api/v1/blog/create` | POST | 创建文章 |
+| `/api/v1/blog/:id` | PUT | 更新文章 |
+| `/api/v1/blog/:id` | DELETE | 删除文章 |
 
 详细的接口文档：
 - 公开接口文档：[`internal/router/BLOG_API.md`](../internal/router/BLOG_API.md)
@@ -173,7 +173,7 @@ function BlogList() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    axios.get('http://localhost:8080/blog/list', {
+    axios.get('http://localhost:8080/api/v1/blog/list', {
       params: {
         page: 1,
         page_size: 10,
@@ -260,7 +260,7 @@ export default {
   methods: {
     async fetchPosts() {
       try {
-        const response = await axios.get('http://localhost:8080/blog/list', {
+        const response = await axios.get('http://localhost:8080/api/v1/blog/list', {
           params: {
             page: 1,
             page_size: 10

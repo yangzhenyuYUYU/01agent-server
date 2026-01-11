@@ -6,15 +6,15 @@
 
 | 接口 | 方法 | 说明 | 权限 |
 |------|------|------|------|
-| `/blog/create` | POST | 创建文章 | 需要认证 |
-| `/blog/:id` | PUT | 更新文章 | 需要认证 |
-| `/blog/:id` | DELETE | 删除文章 | 需要认证 |
+| `/api/v1/blog/create` | POST | 创建文章 | 需要认证 |
+| `/api/v1/blog/:id` | PUT | 更新文章 | 需要认证 |
+| `/api/v1/blog/:id` | DELETE | 删除文章 | 需要认证 |
 
 ---
 
 ## 1. 创建文章
 
-**接口地址**: `POST /blog/create`
+**接口地址**: `POST /api/v1/blog/create`
 
 **请求头**:
 ```
@@ -77,7 +77,7 @@ Authorization: Bearer <token>  // 如果需要认证
 **请求示例**:
 
 ```bash
-curl -X POST "http://localhost:8080/blog/create" \
+curl -X POST "http://localhost:8080/api/v1/api/v1/blog/create" \
   -H "Content-Type: application/json" \
   -d '{
     "slug": "ai-writing-guide-2026",
@@ -130,7 +130,7 @@ curl -X POST "http://localhost:8080/blog/create" \
 
 ## 2. 更新文章
 
-**接口地址**: `PUT /blog/:id`
+**接口地址**: `PUT /api/v1/blog/:id`
 
 **路径参数**:
 - `id`: 文章ID（UUID格式）
@@ -164,7 +164,7 @@ curl -X POST "http://localhost:8080/blog/create" \
 **请求示例**:
 
 ```bash
-curl -X PUT "http://localhost:8080/blog/550e8400-e29b-41d4-a716-446655440000" \
+curl -X PUT "http://localhost:8080/api/v1/api/v1/blog/550e8400-e29b-41d4-a716-446655440000" \
   -H "Content-Type: application/json" \
   -d '{
     "title": "2026年AI写作完全指南（更新版）",
@@ -193,7 +193,7 @@ curl -X PUT "http://localhost:8080/blog/550e8400-e29b-41d4-a716-446655440000" \
 
 ## 3. 删除文章
 
-**接口地址**: `DELETE /blog/:id`
+**接口地址**: `DELETE /api/v1/blog/:id`
 
 **路径参数**:
 - `id`: 文章ID（UUID格式）
@@ -201,7 +201,7 @@ curl -X PUT "http://localhost:8080/blog/550e8400-e29b-41d4-a716-446655440000" \
 **请求示例**:
 
 ```bash
-curl -X DELETE "http://localhost:8080/blog/550e8400-e29b-41d4-a716-446655440000"
+curl -X DELETE "http://localhost:8080/api/v1/api/v1/blog/550e8400-e29b-41d4-a716-446655440000"
 ```
 
 **响应示例**:
@@ -252,7 +252,7 @@ const axios = require('axios');
 
 async function createBlogPost() {
   try {
-    const response = await axios.post('http://localhost:8080/blog/create', {
+    const response = await axios.post('http://localhost:8080/api/v1/api/v1/blog/create', {
       slug: 'getting-started-with-ai',
       title: 'AI创作入门指南',
       summary: '从零开始学习AI辅助内容创作',
@@ -303,7 +303,7 @@ import requests
 import json
 
 def create_blog_post():
-    url = "http://localhost:8080/blog/create"
+    url = "http://localhost:8080/api/v1/api/v1/blog/create"
     
     data = {
         "slug": "getting-started-with-ai",
@@ -347,7 +347,7 @@ if __name__ == "__main__":
 ```bash
 # 使用循环批量创建
 for i in {1..5}; do
-  curl -X POST "http://localhost:8080/blog/create" \
+  curl -X POST "http://localhost:8080/api/v1/api/v1/blog/create" \
     -H "Content-Type: application/json" \
     -d "{
       \"slug\": \"test-post-$i\",

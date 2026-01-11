@@ -61,19 +61,19 @@
 
 | # | 接口 | 方法 | 功能 |
 |---|------|------|------|
-| 1 | `/blog/list` | GET | 文章列表 |
-| 2 | `/blog/:slug` | GET | 文章详情 |
-| 3 | `/blog/sitemap` | GET | Sitemap数据 |
-| 4 | `/blog/:slug/related` | GET | 相关文章 |
-| 5 | `/blog/:slug/view` | POST | 浏览量统计 |
+| 1 | `/api/v1/blog/list` | GET | 文章列表 |
+| 2 | `/api/v1/blog/:slug` | GET | 文章详情 |
+| 3 | `/api/v1/blog/sitemap` | GET | Sitemap数据 |
+| 4 | `/api/v1/blog/:slug/related` | GET | 相关文章 |
+| 5 | `/api/v1/blog/:slug/view` | POST | 浏览量统计 |
 
 ### 管理接口（3个）
 
 | # | 接口 | 方法 | 功能 |
 |---|------|------|------|
-| 6 | `/blog/create` | POST | 创建文章 |
-| 7 | `/blog/:id` | PUT | 更新文章 |
-| 8 | `/blog/:id` | DELETE | 删除文章 |
+| 6 | `/api/v1/blog/create` | POST | 创建文章 |
+| 7 | `/api/v1/blog/:id` | PUT | 更新文章 |
+| 8 | `/api/v1/blog/:id` | DELETE | 删除文章 |
 
 ---
 
@@ -174,7 +174,7 @@ scripts\test_blog_admin.bat
 ### 创建一篇文章
 
 ```bash
-curl -X POST "http://localhost:8080/blog/create" \
+curl -X POST "http://localhost:8080/api/v1/blog/create" \
   -H "Content-Type: application/json" \
   -d '{
     "slug": "ai-writing-tips",
@@ -190,13 +190,13 @@ curl -X POST "http://localhost:8080/blog/create" \
 ### 查询文章列表
 
 ```bash
-curl "http://localhost:8080/blog/list?page=1&page_size=10&category=tutorials"
+curl "http://localhost:8080/api/v1/blog/list?page=1&page_size=10&category=tutorials"
 ```
 
 ### 更新文章
 
 ```bash
-curl -X PUT "http://localhost:8080/blog/{article-id}" \
+curl -X PUT "http://localhost:8080/api/v1/blog/{article-id}" \
   -H "Content-Type: application/json" \
   -d '{
     "title": "更新后的标题",
@@ -207,7 +207,7 @@ curl -X PUT "http://localhost:8080/blog/{article-id}" \
 ### 删除文章
 
 ```bash
-curl -X DELETE "http://localhost:8080/blog/{article-id}"
+curl -X DELETE "http://localhost:8080/api/v1/blog/{article-id}"
 ```
 
 ---
@@ -245,7 +245,7 @@ const createPost = async (data) => {
 
 // 查询列表
 const fetchPosts = async (page = 1) => {
-  const response = await fetch(`/blog/list?page=${page}&page_size=10`);
+  const response = await fetch(`/api/v1/blog/list?page=${page}&page_size=10`);
   return response.json();
 };
 ```
@@ -255,13 +255,13 @@ const fetchPosts = async (page = 1) => {
 ```javascript
 // 更新文章
 async updatePost(id, data) {
-  const response = await this.$http.put(`/blog/${id}`, data);
+  const response = await this.$http.put(`/api/v1/blog/${id}`, data);
   return response.data;
 }
 
 // 删除文章
 async deletePost(id) {
-  const response = await this.$http.delete(`/blog/${id}`);
+  const response = await this.$http.delete(`/api/v1/blog/${id}`);
   return response.data;
 }
 ```
