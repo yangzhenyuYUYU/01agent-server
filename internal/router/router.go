@@ -39,6 +39,7 @@ func SetupRouter() *gin.Engine {
 	SetupConcurrentRoutes(r, concurrentHandler)
 	admin.SetupAdminRoutes(r)          // 管理员路由
 	digital.SetupDigitalAdminRoutes(r) // 数字人管理端路由
+	RegisterBlogRoutes(r)              // 博客路由
 
 	// 健康检查
 	r.GET("/health", func(c *gin.Context) {
