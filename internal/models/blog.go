@@ -23,6 +23,7 @@ type BlogPost struct {
 	IsFeatured     bool       `json:"is_featured" gorm:"column:is_featured;default:false" description:"是否精选"`
 	SEODescription *string    `json:"seo_description" gorm:"column:seo_description;type:varchar(500)" description:"SEO描述"`
 	Status         string     `json:"status" gorm:"column:status;type:varchar(20);default:'published';index" description:"状态: draft/published/archived"`
+	ThemeName      *string    `json:"theme_name" gorm:"column:theme_name;type:varchar(100)" description:"主题样式名称"`
 	CreatedAt      time.Time  `json:"created_at" gorm:"column:created_at;autoCreateTime" description:"创建时间"`
 
 	// 关联字段
@@ -97,6 +98,7 @@ type BlogCreateRequest struct {
 	IsFeatured     bool     `json:"is_featured" description:"是否精选"`
 	SEODescription *string  `json:"seo_description" description:"SEO描述"`
 	Status         string   `json:"status" description:"状态: draft/published/archived"`
+	ThemeName      *string  `json:"theme_name" description:"主题样式名称"`
 	Tags           []string `json:"tags" description:"标签列表"`
 	SEOKeywords    []string `json:"seo_keywords" description:"SEO关键词列表"`
 }
@@ -114,6 +116,7 @@ type BlogUpdateRequest struct {
 	IsFeatured     *bool    `json:"is_featured" description:"是否精选"`
 	SEODescription *string  `json:"seo_description" description:"SEO描述"`
 	Status         *string  `json:"status" description:"状态"`
+	ThemeName      *string  `json:"theme_name" description:"主题样式名称"`
 	Tags           []string `json:"tags" description:"标签列表"`
 	SEOKeywords    []string `json:"seo_keywords" description:"SEO关键词列表"`
 }
@@ -136,6 +139,7 @@ type BlogPostResponse struct {
 	Views          int        `json:"views"`
 	Likes          int        `json:"likes"`
 	IsFeatured     bool       `json:"is_featured"`
+	ThemeName      *string    `json:"theme_name"`
 	Tags           []string   `json:"tags"`
 	SEOKeywords    []string   `json:"seo_keywords,omitempty"`
 	SEODescription *string    `json:"seo_description,omitempty"`
@@ -165,6 +169,7 @@ func (bp *BlogPost) ToResponse(includeContent bool) *BlogPostResponse {
 		Views:        bp.Views,
 		Likes:        bp.Likes,
 		IsFeatured:   bp.IsFeatured,
+		ThemeName:    bp.ThemeName,
 		Tags:         []string{},
 		SEOKeywords:  []string{},
 		Status:       bp.Status,

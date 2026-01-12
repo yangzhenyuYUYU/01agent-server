@@ -265,6 +265,25 @@ func (h *BlogHandler) RecordReadTime(c *gin.Context) {
 	})
 }
 
+// GetThemePreview 获取主题预览配置
+// GET /blog/theme/preview?name=theme_name
+func (h *BlogHandler) GetThemePreview(c *gin.Context) {
+	themeName := c.Query("name")
+	if themeName == "" {
+		middleware.HandleError(c, middleware.NewBusinessError(400, "主题名称不能为空"))
+		return
+	}
+
+	themeConfig, err := h.blogService.GetThemePreview(themeName)
+	if err != nil {
+		repository.Errorf("GetThemePreview failed: %v", err)
+		middleware.HandleError(c, middleware.NewBusinessError(404, err.Error()))
+		return
+	}
+
+	middleware.Success(c, "获取主题配置成功", themeConfig)
+}
+
 // CreateBlogPost 创建博客文章
 // POST /blog/create
 func (h *BlogHandler) CreateBlogPost(c *gin.Context) {
@@ -338,6 +357,7 @@ func RegisterBlogRoutes(r *gin.Engine) {
 		// 公开接口 - 不需要认证
 		blog.GET("/list", handler.GetBlogList)                // 文章列表
 		blog.GET("/sitemap", handler.GetSitemap)              // Sitemap数据
+		blog.GET("/theme/preview", handler.GetThemePreview)   // 主题预览配置
 		blog.GET("/:slug/related", handler.GetRelatedPosts)   // 相关文章（必须在 /:slug 之前）
 		blog.POST("/:slug/view", handler.IncrementViews)      // 浏览量统计
 		blog.POST("/:slug/like", handler.IncrementLikes)      // 点赞

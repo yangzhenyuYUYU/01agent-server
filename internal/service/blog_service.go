@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"01agent_server/internal/repository"
 
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 type BlogService struct {
@@ -157,6 +159,7 @@ func (s *BlogService) CreateBlogPost(req *models.BlogCreateRequest) (*models.Blo
 		IsFeatured:     req.IsFeatured,
 		SEODescription: req.SEODescription,
 		Status:         req.Status,
+		ThemeName:      req.ThemeName,
 	}
 
 	// 创建文章（包含标签和SEO关键词）
@@ -228,6 +231,9 @@ func (s *BlogService) UpdateBlogPost(postID string, req *models.BlogUpdateReques
 	}
 	if req.SEODescription != nil {
 		updates["seo_description"] = *req.SEODescription
+	}
+	if req.ThemeName != nil {
+		updates["theme_name"] = *req.ThemeName
 	}
 	if req.Status != nil {
 		// 验证状态
@@ -335,4 +341,53 @@ func (s *BlogService) GetBlogStats() (map[string]interface{}, error) {
 	stats["total_tags"] = totalTags
 
 	return stats, nil
+}
+
+// GetThemePreview 获取主题预览配置
+func (s *BlogService) GetThemePreview(themeName string) (map[string]interface{}, error) {
+	if themeName == "" {
+		return nil, fmt.Errorf("theme_name is required")
+	}
+
+	// 查询 public_templates 表，按 name 字段匹配
+	var template models.PublicTemplate
+	db := repository.GetDB()
+
+	err := db.Where("name = ? AND status = ? AND is_public = ?",
+		themeName,
+		models.TemplateStatusPublished,
+		true).
+		First(&template).Error
+
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, fmt.Errorf("theme '%s' not found", themeName)
+		}
+		return nil, fmt.Errorf("query theme failed: %w", err)
+	}
+
+	// 解析 template_data JSON
+	var templateData map[string]interface{}
+	if template.TemplateData != nil && *template.TemplateData != "" {
+		if err := json.Unmarshal([]byte(*template.TemplateData), &templateData); err != nil {
+			return nil, fmt.Errorf("parse template_data failed: %w", err)
+		}
+	} else {
+		templateData = make(map[string]interface{})
+	}
+
+	// 构建响应
+	response := map[string]interface{}{
+		"theme_id":      template.TemplateID,
+		"theme_name":    template.Name,
+		"theme_name_en": template.NameEn,
+		"description":   template.Description,
+		"author":        template.Author,
+		"template_type": template.TemplateType,
+		"primary_color": template.PrimaryColor,
+		"tags":          template.Tags,
+		"config":        templateData,
+	}
+
+	return response, nil
 }
