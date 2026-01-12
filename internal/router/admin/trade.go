@@ -131,15 +131,15 @@ func (h *AdminHandler) GetTradeV2List(c *gin.Context) {
 		query = query.Where("user_id = ?", *req.UserID)
 	}
 
-	// 用户名和手机号筛选需要 JOIN users 表
+	// 用户名和手机号筛选需要 JOIN user 表
 	needJoinUser := (req.Username != nil && *req.Username != "") || (req.Phone != nil && *req.Phone != "")
 	if needJoinUser {
-		query = query.Joins("LEFT JOIN users ON trades.user_id = users.user_id")
+		query = query.Joins("LEFT JOIN user ON trades.user_id = user.user_id")
 		if req.Username != nil && *req.Username != "" {
-			query = query.Where("users.username LIKE ?", "%"+*req.Username+"%")
+			query = query.Where("user.username LIKE ?", "%"+*req.Username+"%")
 		}
 		if req.Phone != nil && *req.Phone != "" {
-			query = query.Where("users.phone LIKE ?", "%"+*req.Phone+"%")
+			query = query.Where("user.phone LIKE ?", "%"+*req.Phone+"%")
 		}
 	}
 

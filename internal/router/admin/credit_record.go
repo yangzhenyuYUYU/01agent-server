@@ -757,8 +757,8 @@ func (h *AdminHandler) GetCreditRecordsStatsOverview(c *gin.Context) {
 
 	// 排除管理员
 	if req.ExcludeAdmin {
-		query = query.Joins("LEFT JOIN users ON credit_records.user_id = users.user_id").
-			Where("users.role != ? OR users.role IS NULL", 1) // 假设 1 是管理员角色
+		query = query.Joins("LEFT JOIN user ON credit_records.user_id = user.user_id").
+			Where("user.role != ? OR user.role IS NULL", 1) // 假设 1 是管理员角色
 	}
 
 	// 日期范围
