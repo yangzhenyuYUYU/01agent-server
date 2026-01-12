@@ -156,6 +156,115 @@ func (h *BlogHandler) IncrementViews(c *gin.Context) {
 	middleware.Success(c, "success", nil)
 }
 
+// IncrementLikes 增加文章点赞数
+// POST /blog/:slug/like
+func (h *BlogHandler) IncrementLikes(c *gin.Context) {
+	slug := c.Param("slug")
+	if slug == "" {
+		middleware.HandleError(c, middleware.NewBusinessError(400, "文章标识不能为空"))
+		return
+	}
+
+	// 先获取文章信息
+	post, err := h.blogService.GetBlogBySlug(slug)
+	if err != nil {
+		repository.Errorf("GetBlogBySlug failed: %v", err)
+		middleware.HandleError(c, middleware.NewBusinessError(404, "文章不存在"))
+		return
+	}
+
+	// 增加点赞数
+	err = h.blogService.IncrementLikes(post.ID)
+	if err != nil {
+		repository.Errorf("IncrementLikes failed: %v", err)
+		middleware.HandleError(c, middleware.NewBusinessError(500, "点赞失败"))
+		return
+	}
+
+	middleware.Success(c, "点赞成功", gin.H{
+		"likes": post.Likes + 1,
+	})
+}
+
+// DecrementLikes 取消文章点赞
+// POST /blog/:slug/unlike
+func (h *BlogHandler) DecrementLikes(c *gin.Context) {
+	slug := c.Param("slug")
+	if slug == "" {
+		middleware.HandleError(c, middleware.NewBusinessError(400, "文章标识不能为空"))
+		return
+	}
+
+	// 先获取文章信息
+	post, err := h.blogService.GetBlogBySlug(slug)
+	if err != nil {
+		repository.Errorf("GetBlogBySlug failed: %v", err)
+		middleware.HandleError(c, middleware.NewBusinessError(404, "文章不存在"))
+		return
+	}
+
+	// 减少点赞数
+	err = h.blogService.DecrementLikes(post.ID)
+	if err != nil {
+		repository.Errorf("DecrementLikes failed: %v", err)
+		middleware.HandleError(c, middleware.NewBusinessError(500, "取消点赞失败"))
+		return
+	}
+
+	newLikes := post.Likes - 1
+	if newLikes < 0 {
+		newLikes = 0
+	}
+
+	middleware.Success(c, "取消点赞成功", gin.H{
+		"likes": newLikes,
+	})
+}
+
+// RecordReadTime 记录阅读时长（用于统计真实阅读时间）
+// POST /blog/:slug/read-time
+func (h *BlogHandler) RecordReadTime(c *gin.Context) {
+	slug := c.Param("slug")
+	if slug == "" {
+		middleware.HandleError(c, middleware.NewBusinessError(400, "文章标识不能为空"))
+		return
+	}
+
+	var req struct {
+		Duration int `json:"duration" binding:"required"` // 阅读时长（秒）
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(400, "参数错误: "+err.Error()))
+		return
+	}
+
+	// 验证时长合理性（1秒到1小时）
+	if req.Duration < 1 || req.Duration > 3600 {
+		middleware.HandleError(c, middleware.NewBusinessError(400, "阅读时长不合理"))
+		return
+	}
+
+	// 先获取文章信息
+	post, err := h.blogService.GetBlogBySlug(slug)
+	if err != nil {
+		// 统计失败不影响用户体验，返回成功
+		repository.Errorf("GetBlogBySlug failed: %v", err)
+		middleware.Success(c, "success", nil)
+		return
+	}
+
+	// 记录阅读时长（这里可以扩展为保存到单独的统计表）
+	repository.Infof("Article %s read for %d seconds", post.ID, req.Duration)
+
+	// TODO: 可以将阅读时长保存到单独的统计表中
+	// 例如：blog_read_records (post_id, user_id, duration, created_at)
+
+	middleware.Success(c, "记录成功", gin.H{
+		"duration": req.Duration,
+	})
+}
+
 // CreateBlogPost 创建博客文章
 // POST /blog/create
 func (h *BlogHandler) CreateBlogPost(c *gin.Context) {
@@ -227,11 +336,14 @@ func RegisterBlogRoutes(r *gin.Engine) {
 	blog := r.Group("/api/v1/blog")
 	{
 		// 公开接口 - 不需要认证
-		blog.GET("/list", handler.GetBlogList)              // 文章列表
-		blog.GET("/sitemap", handler.GetSitemap)            // Sitemap数据
-		blog.GET("/:slug/related", handler.GetRelatedPosts) // 相关文章（必须在 /:slug 之前）
-		blog.POST("/:slug/view", handler.IncrementViews)    // 浏览量统计
-		blog.GET("/:slug", handler.GetBlogPost)             // 文章详情（放在最后，作为兜底路由）
+		blog.GET("/list", handler.GetBlogList)                // 文章列表
+		blog.GET("/sitemap", handler.GetSitemap)              // Sitemap数据
+		blog.GET("/:slug/related", handler.GetRelatedPosts)   // 相关文章（必须在 /:slug 之前）
+		blog.POST("/:slug/view", handler.IncrementViews)      // 浏览量统计
+		blog.POST("/:slug/like", handler.IncrementLikes)      // 点赞
+		blog.POST("/:slug/unlike", handler.DecrementLikes)    // 取消点赞
+		blog.POST("/:slug/read-time", handler.RecordReadTime) // 记录阅读时长
+		blog.GET("/:slug", handler.GetBlogPost)               // 文章详情（放在最后，作为兜底路由）
 
 		// 管理接口 - 需要认证（后续可添加JWT中间件）
 		blog.POST("/create", handler.CreateBlogPost) // 创建文章

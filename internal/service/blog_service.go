@@ -99,6 +99,16 @@ func (s *BlogService) IncrementViews(postID string) error {
 	return s.repo.IncrementViews(postID)
 }
 
+// IncrementLikes 增加点赞数
+func (s *BlogService) IncrementLikes(postID string) error {
+	return s.repo.IncrementLikes(postID)
+}
+
+// DecrementLikes 减少点赞数
+func (s *BlogService) DecrementLikes(postID string) error {
+	return s.repo.DecrementLikes(postID)
+}
+
 // GetSitemapData 获取sitemap数据
 func (s *BlogService) GetSitemapData() ([]map[string]interface{}, error) {
 	return s.repo.GetSitemapData()

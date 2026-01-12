@@ -186,6 +186,20 @@ func (r *BlogRepository) IncrementViews(postID string) error {
 		UpdateColumn("views", gorm.Expr("views + ?", 1)).Error
 }
 
+// IncrementLikes 增加点赞数
+func (r *BlogRepository) IncrementLikes(postID string) error {
+	return r.db.Model(&models.BlogPost{}).
+		Where("id = ?", postID).
+		UpdateColumn("likes", gorm.Expr("likes + ?", 1)).Error
+}
+
+// DecrementLikes 减少点赞数（取消点赞）
+func (r *BlogRepository) DecrementLikes(postID string) error {
+	return r.db.Model(&models.BlogPost{}).
+		Where("id = ? AND likes > 0", postID).
+		UpdateColumn("likes", gorm.Expr("likes - ?", 1)).Error
+}
+
 // GetSitemapData 获取sitemap数据
 func (r *BlogRepository) GetSitemapData() ([]map[string]interface{}, error) {
 	var results []map[string]interface{}
