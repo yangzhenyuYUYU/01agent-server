@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -24,10 +25,16 @@ const (
 	UserRoleDistributor int16 = 4 // 分销商/合作方
 )
 
+// DistributorExtraParams 分销商额外参数结构
+type DistributorExtraParams struct {
+	OriginalRole           int16 `json:"original_role"`            // 原始角色：1=普通用户，2=VIP，3=管理员
+	AllowInvitationCredits bool  `json:"allow_invitation_credits"` // 是否允许享受邀请积分奖励，默认false
+}
+
 // SetDistributorRequest 设置分销商请求
 type SetDistributorRequest struct {
-	CommissionRate *float64 `json:"commission_rate"` // 佣金比例，可选，默认0.2
-	ExtraParams    *string  `json:"extra_params"`    // 额外参数，JSON格式，可选
+	CommissionRate         *float64 `json:"commission_rate"`          // 佣金比例，可选，默认0.2
+	AllowInvitationCredits *bool    `json:"allow_invitation_credits"` // 是否允许享受邀请积分奖励，默认false
 }
 
 // SetDistributor 设置用户为分销商身份
@@ -75,6 +82,12 @@ func (h *AdminHandler) SetDistributor(c *gin.Context) {
 		commissionRate = *req.CommissionRate
 	}
 
+	// 设置是否允许邀请积分，默认为false
+	allowInvitationCredits := false
+	if req.AllowInvitationCredits != nil {
+		allowInvitationCredits = *req.AllowInvitationCredits
+	}
+
 	// 开启事务
 	tx := repository.DB.Begin()
 	defer func() {
@@ -87,12 +100,50 @@ func (h *AdminHandler) SetDistributor(c *gin.Context) {
 	var existingDistributor models.Distributor
 	err := tx.Where("user_id = ?", userID).First(&existingDistributor).Error
 
+	// 构建 extra_params
+	var extraParamsJSON string
+	if err == gorm.ErrRecordNotFound {
+		// 首次设置为分销商，保存原始角色
+		extraParams := DistributorExtraParams{
+			OriginalRole:           user.Role,
+			AllowInvitationCredits: allowInvitationCredits,
+		}
+		extraParamsBytes, jsonErr := json.Marshal(extraParams)
+		if jsonErr != nil {
+			tx.Rollback()
+			repository.Errorf("序列化extra_params失败: %v", jsonErr)
+			middleware.HandleError(c, middleware.NewBusinessError(500, "序列化参数失败"))
+			return
+		}
+		extraParamsJSON = string(extraParamsBytes)
+	} else if err == nil {
+		// 已存在，保留原始角色，只更新邀请积分配置
+		var existingParams DistributorExtraParams
+		if existingDistributor.ExtraParams != nil {
+			if jsonErr := json.Unmarshal([]byte(*existingDistributor.ExtraParams), &existingParams); jsonErr != nil {
+				// 如果解析失败，使用当前用户角色作为原始角色
+				existingParams.OriginalRole = user.Role
+			}
+		} else {
+			// 如果之前没有保存，使用当前用户角色
+			existingParams.OriginalRole = user.Role
+		}
+		existingParams.AllowInvitationCredits = allowInvitationCredits
+
+		extraParamsBytes, jsonErr := json.Marshal(existingParams)
+		if jsonErr != nil {
+			tx.Rollback()
+			repository.Errorf("序列化extra_params失败: %v", jsonErr)
+			middleware.HandleError(c, middleware.NewBusinessError(500, "序列化参数失败"))
+			return
+		}
+		extraParamsJSON = string(extraParamsBytes)
+	}
+
 	if err == nil {
 		// 已存在，更新分销商信息
 		existingDistributor.CommissionRate = commissionRate
-		if req.ExtraParams != nil {
-			existingDistributor.ExtraParams = req.ExtraParams
-		}
+		existingDistributor.ExtraParams = &extraParamsJSON
 		if err := tx.Save(&existingDistributor).Error; err != nil {
 			tx.Rollback()
 			repository.Errorf("更新分销商信息失败: %v", err)
@@ -105,7 +156,7 @@ func (h *AdminHandler) SetDistributor(c *gin.Context) {
 			DistributorID:  uuid.New().String(),
 			UserID:         userID,
 			CommissionRate: commissionRate,
-			ExtraParams:    req.ExtraParams,
+			ExtraParams:    &extraParamsJSON,
 		}
 		if err := tx.Create(&newDistributor).Error; err != nil {
 			tx.Rollback()
@@ -198,6 +249,17 @@ func (h *AdminHandler) RemoveDistributor(c *gin.Context) {
 		}
 	}()
 
+	// 从 extra_params 中读取原始角色
+	var originalRole int16 = UserRoleNormal // 默认恢复为普通用户
+	if distributor.ExtraParams != nil {
+		var extraParams DistributorExtraParams
+		if err := json.Unmarshal([]byte(*distributor.ExtraParams), &extraParams); err == nil {
+			originalRole = extraParams.OriginalRole
+		} else {
+			repository.Warnf("解析extra_params失败，将恢复为普通用户: %v", err)
+		}
+	}
+
 	// 删除分销商记录
 	if err := tx.Where("user_id = ?", userID).Delete(&models.Distributor{}).Error; err != nil {
 		tx.Rollback()
@@ -206,10 +268,10 @@ func (h *AdminHandler) RemoveDistributor(c *gin.Context) {
 		return
 	}
 
-	// 如果用户当前角色是分销商，恢复为普通用户
+	// 如果用户当前角色是分销商，恢复为原始角色
 	if user.Role == UserRoleDistributor {
 		if err := tx.Model(&models.User{}).Where("user_id = ?", userID).
-			Update("role", UserRoleNormal).Error; err != nil {
+			Update("role", originalRole).Error; err != nil {
 			tx.Rollback()
 			repository.Errorf("更新用户角色失败: %v", err)
 			middleware.HandleError(c, middleware.NewBusinessError(500, "更新用户角色失败"))
@@ -272,13 +334,37 @@ func (h *AdminHandler) GetDistributorInfo(c *gin.Context) {
 		return
 	}
 
+	// 解析 extra_params
+	var extraParams DistributorExtraParams
+	var originalRoleName string
+	allowInvitationCredits := false
+
+	if distributor.ExtraParams != nil {
+		if err := json.Unmarshal([]byte(*distributor.ExtraParams), &extraParams); err == nil {
+			allowInvitationCredits = extraParams.AllowInvitationCredits
+			switch extraParams.OriginalRole {
+			case UserRoleNormal:
+				originalRoleName = "普通用户"
+			case UserRoleVIP:
+				originalRoleName = "VIP用户"
+			case UserRoleAdmin:
+				originalRoleName = "管理员"
+			default:
+				originalRoleName = "未知"
+			}
+		}
+	}
+
 	middleware.Success(c, "获取分销商信息成功", gin.H{
-		"distributor_id":  distributor.DistributorID,
-		"user_id":         distributor.UserID,
-		"commission_rate": distributor.CommissionRate,
-		"extra_params":    distributor.ExtraParams,
-		"created_at":      distributor.CreatedAt.Format("2006-01-02 15:04:05"),
-		"updated_at":      distributor.UpdatedAt.Format("2006-01-02 15:04:05"),
+		"distributor_id":           distributor.DistributorID,
+		"user_id":                  distributor.UserID,
+		"commission_rate":          distributor.CommissionRate,
+		"original_role":            extraParams.OriginalRole,
+		"original_role_name":       originalRoleName,
+		"allow_invitation_credits": allowInvitationCredits,
+		"extra_params_raw":         distributor.ExtraParams,
+		"created_at":               distributor.CreatedAt.Format("2006-01-02 15:04:05"),
+		"updated_at":               distributor.UpdatedAt.Format("2006-01-02 15:04:05"),
 	})
 }
 
@@ -351,13 +437,36 @@ func (h *AdminHandler) GetDistributorList(c *gin.Context) {
 	// 构建响应
 	items := make([]gin.H, len(distributors))
 	for i, d := range distributors {
+		// 解析 extra_params
+		var extraParams DistributorExtraParams
+		var originalRoleName string
+		allowInvitationCredits := false
+
+		if d.ExtraParams != nil {
+			if err := json.Unmarshal([]byte(*d.ExtraParams), &extraParams); err == nil {
+				allowInvitationCredits = extraParams.AllowInvitationCredits
+				switch extraParams.OriginalRole {
+				case UserRoleNormal:
+					originalRoleName = "普通用户"
+				case UserRoleVIP:
+					originalRoleName = "VIP用户"
+				case UserRoleAdmin:
+					originalRoleName = "管理员"
+				default:
+					originalRoleName = "未知"
+				}
+			}
+		}
+
 		item := gin.H{
-			"distributor_id":  d.DistributorID,
-			"user_id":         d.UserID,
-			"commission_rate": d.CommissionRate,
-			"extra_params":    d.ExtraParams,
-			"created_at":      d.CreatedAt.Format("2006-01-02 15:04:05"),
-			"updated_at":      d.UpdatedAt.Format("2006-01-02 15:04:05"),
+			"distributor_id":           d.DistributorID,
+			"user_id":                  d.UserID,
+			"commission_rate":          d.CommissionRate,
+			"original_role":            extraParams.OriginalRole,
+			"original_role_name":       originalRoleName,
+			"allow_invitation_credits": allowInvitationCredits,
+			"created_at":               d.CreatedAt.Format("2006-01-02 15:04:05"),
+			"updated_at":               d.UpdatedAt.Format("2006-01-02 15:04:05"),
 		}
 
 		// 添加用户信息
