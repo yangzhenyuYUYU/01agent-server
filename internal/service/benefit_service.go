@@ -91,28 +91,19 @@ func (s *BenefitService) GetUserBenefits(userID string) (map[string]interface{},
 		return result, nil
 	}
 
-	// 计算过期时间
-	var expireTime *time.Time
-	var isActive bool
+	// 使用累加算法计算最终过期时间（考虑多次续费累加场景）
+	expireTime, isActive, activeProductName := s.CalculateMembershipExpireTime(userID)
 
-	if userProduction.Trade != nil && userProduction.Trade.PaidAt != nil {
-		paidAt := *userProduction.Trade.PaidAt
-		if userProduction.Production.ValidityPeriod != nil {
-			exp := paidAt.Add(time.Duration(*userProduction.Production.ValidityPeriod) * 24 * time.Hour)
-			expireTime = &exp
-			isActive = time.Now().Before(exp)
-		} else {
-			// 终身会员，永不过期
-			isActive = true
-		}
-	} else {
-		isActive = false
-	}
-
-	// 获取会员名称和等级
+	// 获取会员名称和等级（使用累加计算后的产品名称）
 	membershipName := "免费版"
 	vipLevel := user.VipLevel
 	role := user.Role
+
+	if activeProductName != "" {
+		membershipName = activeProductName
+	} else if userProduction.Production != nil {
+		membershipName = userProduction.Production.Name
+	}
 
 	// 如果过期且不是管理员，降级为免费版
 	if !isActive && user.Role != 0 { // 0 是管理员
@@ -130,17 +121,21 @@ func (s *BenefitService) GetUserBenefits(userID string) (map[string]interface{},
 	}
 
 	if isActive && user.Role != 0 {
-		if userProduction.Production != nil {
+		// 使用累加计算后的产品名称（优先），或最新订阅的产品名称
+		if activeProductName != "" {
+			membershipName = activeProductName
+		} else if userProduction.Production != nil {
 			membershipName = userProduction.Production.Name
-			vipLevel = s.getVipLevelByProductName(membershipName)
-			role = 2 // VIP
-			user.VipLevel = vipLevel
-			user.Role = role
-			s.userRepo.Update(user)
-			// 更新存储配额
-			userParam.StorageQuota = s.getStorageQuotaByVipLevel(vipLevel)
-			s.parametersRepo.Update(userParam)
 		}
+
+		vipLevel = s.getVipLevelByProductName(membershipName)
+		role = 2 // VIP
+		user.VipLevel = vipLevel
+		user.Role = role
+		s.userRepo.Update(user)
+		// 更新存储配额
+		userParam.StorageQuota = s.getStorageQuotaByVipLevel(vipLevel)
+		s.parametersRepo.Update(userParam)
 	}
 
 	// 更新返回数据
@@ -175,6 +170,117 @@ func (s *BenefitService) GetUserBenefits(userID string) (map[string]interface{},
 	}
 
 	return result, nil
+}
+
+// CalculateMembershipExpireTime 计算用户会员的最终过期时间（考虑多次续费累加）
+//
+// 计算逻辑：
+// 1. 获取用户所有有效的订阅服务订单，按创建时间升序排列
+// 2. 链式计算：每个订单的有效期从上一个订单的过期时间开始（如果上一个还没过期）
+//
+//	或者从订单创建时间开始（如果是第一个订单或上一个已过期）
+//
+// 3. 返回最终的过期时间和最后一个有效订单的产品名称
+//
+// 返回值:
+// - expireTime: 最终过期时间（终身会员返回 nil）
+// - isActive: 会员是否有效
+// - productName: 最新产品名称（无订阅或全部过期返回空字符串）
+func (s *BenefitService) CalculateMembershipExpireTime(userID string) (*time.Time, bool, string) {
+	db := repository.GetDB()
+	now := time.Now()
+
+	// 获取用户所有有效的订阅服务订单，按创建时间升序排列
+	var userProductions []models.UserProduction
+	err := db.Where("user_id = ? AND status = ?", userID, "active").
+		Joins("JOIN productions ON user_productions.production_id = productions.id").
+		Where("productions.product_type = ?", "订阅服务").
+		Order("user_productions.created_at ASC").
+		Preload("Production").
+		Preload("Trade").
+		Find(&userProductions).Error
+
+	if err != nil || len(userProductions) == 0 {
+		return nil, false, ""
+	}
+
+	// 链式计算最终过期时间
+	var currentExpireAt *time.Time
+	hasLifetime := false
+	latestProductName := ""
+
+	for _, up := range userProductions {
+		if up.Production == nil {
+			continue
+		}
+
+		// 获取订单的起始时间（优先使用 trade.paid_at，其次使用 created_at）
+		var orderStart time.Time
+		if up.Trade != nil && up.Trade.PaidAt != nil {
+			orderStart = *up.Trade.PaidAt
+		} else {
+			orderStart = up.CreatedAt
+		}
+
+		// 获取产品配置
+		productConfig := config.GetSubscriptionProduct(up.Production.Name)
+
+		if productConfig != nil {
+			if productConfig.ValidityMonths == -1 {
+				// 终身会员
+				hasLifetime = true
+				latestProductName = up.Production.Name
+				continue
+			} else if productConfig.ValidityMonths > 0 {
+				// 有期限会员
+				// 确定这个订单的起始时间
+				var startAt time.Time
+				if currentExpireAt != nil && currentExpireAt.After(orderStart) {
+					// 上一个订单还没过期，从上一个订单的过期时间开始累加
+					startAt = *currentExpireAt
+				} else {
+					// 第一个订单，或上一个订单已过期，从订单时间开始
+					startAt = orderStart
+				}
+
+				// 计算这个订单的过期时间
+				exp := startAt.AddDate(0, productConfig.ValidityMonths, 0)
+				currentExpireAt = &exp
+				latestProductName = up.Production.Name
+			} else {
+				// 免费版，跳过
+				continue
+			}
+		} else if up.Production.ValidityPeriod != nil && *up.Production.ValidityPeriod > 0 {
+			// 兼容旧逻辑：使用 validity_period（天数）
+			var startAt time.Time
+			if currentExpireAt != nil && currentExpireAt.After(orderStart) {
+				startAt = *currentExpireAt
+			} else {
+				startAt = orderStart
+			}
+
+			exp := startAt.Add(time.Duration(*up.Production.ValidityPeriod) * 24 * time.Hour)
+			currentExpireAt = &exp
+			latestProductName = up.Production.Name
+		}
+	}
+
+	// 终身会员优先
+	if hasLifetime {
+		return nil, true, latestProductName
+	}
+
+	if currentExpireAt != nil {
+		isActive := currentExpireAt.After(now)
+		if isActive {
+			return currentExpireAt, true, latestProductName
+		} else {
+			return currentExpireAt, false, ""
+		}
+	}
+
+	return nil, false, ""
 }
 
 // getOrCreateDailyBenefit 获取或创建用户当日的每日权益记录

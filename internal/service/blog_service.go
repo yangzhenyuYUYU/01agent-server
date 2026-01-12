@@ -3,6 +3,7 @@ package service
 import (
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"01agent_server/internal/models"
@@ -151,6 +152,10 @@ func (s *BlogService) CreateBlogPost(req *models.BlogCreateRequest) (*models.Blo
 	// 创建文章（包含标签和SEO关键词）
 	err := s.repo.CreateBlogPost(post, req.Tags, req.SEOKeywords)
 	if err != nil {
+		// 检查是否是 slug 重复错误
+		if strings.Contains(err.Error(), "Duplicate entry") && strings.Contains(err.Error(), "slug") {
+			return nil, fmt.Errorf("slug '%s' 已存在，请使用其他slug", req.Slug)
+		}
 		return nil, fmt.Errorf("create blog post failed: %w", err)
 	}
 
