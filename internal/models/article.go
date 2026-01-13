@@ -4,22 +4,37 @@ import (
 	"time"
 )
 
+// ArticleSceneType 文章场景类型枚举
+type ArticleSceneType string
+
+const (
+	ArticleSceneWeixin   ArticleSceneType = "weixin"   // 微信公众号
+	ArticleSceneZhihu    ArticleSceneType = "zhihu"    // 知乎
+	ArticleSceneToutiao  ArticleSceneType = "toutiao"  // 今日头条
+	ArticleSceneJianshu  ArticleSceneType = "jianshu"  // 简书
+	ArticleSceneCSDN     ArticleSceneType = "csdn"     // CSDN
+	ArticleSceneJuejin   ArticleSceneType = "juejin"   // 掘金
+	ArticleSceneBlog     ArticleSceneType = "blog"     // 个人博客
+	ArticleSceneOther    ArticleSceneType = "other"    // 其他
+)
+
 // ArticleEditTask 文章编辑任务模型
 type ArticleEditTask struct {
-	ID            string     `json:"id" gorm:"primaryKey;column:id;type:char(36)" description:"编辑任务ID"`
-	ArticleTaskID *string    `json:"article_task_id" gorm:"column:article_task_id;type:char(36);index" description:"关联文章任务ID"`
-	UserID        string     `json:"user_id" gorm:"column:user_id;type:varchar(50);not null;index" description:"关联用户ID"`
-	Title         string     `json:"title" gorm:"column:title;type:varchar(255);not null" description:"文章标题"`
-	Theme         string     `json:"theme" gorm:"column:theme;type:varchar(100);default:'default'" description:"文章主题"`
-	Params        *string    `json:"params" gorm:"column:params;type:json" description:"编辑参数"`
-	Content       string     `json:"content" gorm:"column:content;type:longtext;not null" description:"文章内容"`
-	SectionHTML   *string    `json:"section_html" gorm:"column:section_html;type:longtext" description:"文章内容的HTML格式（用于预览）"`
-	Status        string     `json:"status" gorm:"column:status;type:varchar(20);not null;default:'editing'" description:"编辑状态(editing编辑中/pending待发布/published已发布)"`
-	IsPublic      bool       `json:"is_public" gorm:"column:is_public;default:false" description:"是否公开"`
-	Tags          *string    `json:"tags" gorm:"column:tags;type:json" description:"分类标签"`
-	PublishedAt   *time.Time `json:"published_at" gorm:"column:published_at" description:"发布时间"`
-	CreatedAt     time.Time  `json:"created_at" gorm:"column:created_at;autoCreateTime" description:"创建时间"`
-	UpdatedAt     time.Time  `json:"updated_at" gorm:"column:updated_at;autoUpdateTime" description:"更新时间"`
+	ID            string           `json:"id" gorm:"primaryKey;column:id;type:char(36)" description:"编辑任务ID"`
+	ArticleTaskID *string          `json:"article_task_id" gorm:"column:article_task_id;type:char(36);index" description:"关联文章任务ID"`
+	UserID        string           `json:"user_id" gorm:"column:user_id;type:varchar(50);not null;index" description:"关联用户ID"`
+	Title         string           `json:"title" gorm:"column:title;type:varchar(255);not null" description:"文章标题"`
+	Theme         string           `json:"theme" gorm:"column:theme;type:varchar(100);default:'default'" description:"文章主题"`
+	SceneType     ArticleSceneType `json:"scene_type" gorm:"column:scene_type;type:varchar(20);default:'other';index" description:"场景类型"`
+	Params        *string          `json:"params" gorm:"column:params;type:json" description:"编辑参数"`
+	Content       string           `json:"content" gorm:"column:content;type:longtext;not null" description:"文章内容"`
+	SectionHTML   *string          `json:"section_html" gorm:"column:section_html;type:longtext" description:"文章内容的HTML格式（用于预览）"`
+	Status        string           `json:"status" gorm:"column:status;type:varchar(20);not null;default:'editing'" description:"编辑状态(editing编辑中/pending待发布/published已发布)"`
+	IsPublic      bool             `json:"is_public" gorm:"column:is_public;default:false" description:"是否公开"`
+	Tags          *string          `json:"tags" gorm:"column:tags;type:json" description:"分类标签"`
+	PublishedAt   *time.Time       `json:"published_at" gorm:"column:published_at" description:"发布时间"`
+	CreatedAt     time.Time        `json:"created_at" gorm:"column:created_at;autoCreateTime" description:"创建时间"`
+	UpdatedAt     time.Time        `json:"updated_at" gorm:"column:updated_at;autoUpdateTime" description:"更新时间"`
 
 	// 关联关系
 	User        *User        `json:"user,omitempty" gorm:"-"`

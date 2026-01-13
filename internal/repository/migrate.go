@@ -39,6 +39,7 @@ func AutoMigrate() error {
 		&models.InvitationCode{},
 		&models.InvitationRelation{},
 		&models.CommissionRecord{},
+		&models.InvitationRankingCache{},
 		// 交易相关
 		&models.Trade{},
 		&models.BPOrder{},

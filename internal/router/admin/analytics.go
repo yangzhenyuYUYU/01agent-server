@@ -18,15 +18,17 @@ import (
 
 // AnalyticsHandler 数据分析处理器
 type AnalyticsHandler struct {
-	metricsService *analytics.MetricsService
-	trendService   *analytics.TrendService
+	metricsService    *analytics.MetricsService
+	trendService      *analytics.TrendService
+	sceneUsageService *analytics.SceneUsageService
 }
 
 // NewAnalyticsHandler 创建数据分析处理器
 func NewAnalyticsHandler() *AnalyticsHandler {
 	return &AnalyticsHandler{
-		metricsService: analytics.NewMetricsService(),
-		trendService:   analytics.NewTrendService(),
+		metricsService:    analytics.NewMetricsService(),
+		trendService:      analytics.NewTrendService(),
+		sceneUsageService: analytics.NewSceneUsageService(repository.DB),
 	}
 }
 
@@ -1308,4 +1310,195 @@ func (h *AnalyticsHandler) GetRegistrationSourceDistribution(c *gin.Context) {
 		"total":      totalCount,
 		"data":       distributions,
 	})
+}
+
+// GetSceneUsageReport 获取场景使用分析报告
+// @Summary 获取场景使用分析报告
+// @Description 获取指定天数的场景使用综合分析报告，包括场景统计、用户类型对比、产品对比等
+// @Tags admin-analytics
+// @Accept json
+// @Produce json
+// @Param days query int false "统计天数，默认30天"
+// @Param format query string false "返回格式：json或html，默认json"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/v1/admin/analytics/scene-usage/report [get]
+func (h *AnalyticsHandler) GetSceneUsageReport(c *gin.Context) {
+	daysStr := c.DefaultQuery("days", "30")
+	format := c.DefaultQuery("format", "json")
+
+	var days int
+	fmt.Sscanf(daysStr, "%d", &days)
+	if days <= 0 {
+		days = 30
+	}
+	if days > 365 {
+		days = 365 // 最多查询一年
+	}
+
+	// 获取报告数据
+	report, err := h.sceneUsageService.GetSceneUsageReport(days)
+	if err != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(500, "生成场景使用报告失败: "+err.Error()))
+		return
+	}
+
+	// 根据格式返回不同类型的响应
+	if format == "html" {
+		// 生成HTML报告
+		htmlContent := generateSceneUsageHTML(report)
+		c.Header("Content-Type", "text/html; charset=utf-8")
+		c.String(200, htmlContent)
+		return
+	}
+
+	// 默认返回JSON
+	middleware.Success(c, "获取场景使用报告成功", report)
+}
+
+// ============================================
+// 邀请排名相关接口（基于缓存表）
+// ============================================
+
+// GetInvitationRankingV2 获取邀请用户排行榜（实时查询版）
+// @Summary 获取邀请用户排行榜（推荐）
+// @Description 实时查询邀请排名，按总邀请数排序
+// @Tags admin-analytics
+// @Accept json
+// @Produce json
+// @Param sort_by query string false "排序方式：total（总邀请数，默认）、paid（有效邀请数）、commission（佣金）"
+// @Param limit query int false "返回数量，默认50，最大1000"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/v1/admin/analytics/invitation-ranking-v2 [get]
+func (h *AnalyticsHandler) GetInvitationRankingV2(c *gin.Context) {
+	sortBy := c.DefaultQuery("sort_by", "total")
+	limitStr := c.DefaultQuery("limit", "50")
+
+	var limit int
+	fmt.Sscanf(limitStr, "%d", &limit)
+
+	// 创建服务
+	service := analytics.NewInvitationRankingService()
+
+	// 获取排名数据
+	rankings, err := service.GetInvitationRanking(sortBy, limit)
+	if err != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(500, "获取邀请排名失败: "+err.Error()))
+		return
+	}
+
+	// 获取系统级指标
+	metrics, err := service.GetSystemMetrics()
+	if err != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(500, "获取系统指标失败: "+err.Error()))
+		return
+	}
+
+	middleware.Success(c, "获取邀请排名成功", gin.H{
+		"rankings": rankings,
+		"metrics":  metrics,
+		"meta": gin.H{
+			"sort_by": sortBy,
+			"limit":   limit,
+			"count":   len(rankings),
+		},
+	})
+}
+
+// GetInvitationSystemMetrics 获取邀请系统级指标
+// @Summary 获取邀请系统级指标
+// @Description 获取整体的邀请相关指标，如分享率、平均裂变系数等
+// @Tags admin-analytics
+// @Accept json
+// @Produce json
+// @Success 200 {object} map[string]interface{}
+// @Router /api/v1/admin/analytics/invitation-metrics [get]
+func (h *AnalyticsHandler) GetInvitationSystemMetrics(c *gin.Context) {
+	service := analytics.NewInvitationRankingService()
+
+	metrics, err := service.GetSystemMetrics()
+	if err != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(500, "获取系统指标失败: "+err.Error()))
+		return
+	}
+
+	middleware.Success(c, "获取邀请系统指标成功", metrics)
+}
+
+// GetUserInvitationDetail 获取用户的邀请详情
+// @Summary 获取用户的邀请详情
+// @Description 获取指定用户的邀请列表和详细信息
+// @Tags admin-analytics
+// @Accept json
+// @Produce json
+// @Param user_id path string true "用户ID"
+// @Param page query int false "页码，默认1"
+// @Param page_size query int false "每页数量，默认20，最大100"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/v1/admin/analytics/invitation-detail/:user_id [get]
+func (h *AnalyticsHandler) GetUserInvitationDetail(c *gin.Context) {
+	userID := c.Param("user_id")
+	pageStr := c.DefaultQuery("page", "1")
+	pageSizeStr := c.DefaultQuery("page_size", "20")
+
+	var page, pageSize int
+	fmt.Sscanf(pageStr, "%d", &page)
+	fmt.Sscanf(pageSizeStr, "%d", &pageSize)
+
+	service := analytics.NewInvitationRankingService()
+
+	details, total, err := service.GetUserInvitationDetail(userID, page, pageSize)
+	if err != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(500, "获取邀请详情失败: "+err.Error()))
+		return
+	}
+
+	totalPages := (int(total) + pageSize - 1) / pageSize
+
+	middleware.Success(c, "获取邀请详情成功", gin.H{
+		"user_id": userID,
+		"details": details,
+		"pagination": gin.H{
+			"current_page": page,
+			"page_size":    pageSize,
+			"total_count":  total,
+			"total_pages":  totalPages,
+			"has_next":     page < totalPages,
+			"has_prev":     page > 1,
+		},
+	})
+}
+
+// RefreshInvitationRankingCache 实时查询版本不需要刷新
+// @Summary 数据刷新（实时查询版无需刷新）
+// @Description 实时查询版本，数据始终是最新的
+// @Tags admin-analytics
+// @Accept json
+// @Produce json
+// @Success 200 {object} map[string]interface{}
+// @Router /api/v1/admin/analytics/invitation-ranking/refresh [post]
+func (h *AnalyticsHandler) RefreshInvitationRankingCache(c *gin.Context) {
+	middleware.Success(c, "实时查询版本，数据始终最新，无需刷新", gin.H{
+		"query_mode": "realtime",
+		"message":    "数据实时查询，始终最新",
+	})
+}
+
+// GetInvitationCacheStatus 获取数据统计状态
+// @Summary 获取数据统计状态
+// @Description 查看邀请数据统计信息
+// @Tags admin-analytics
+// @Accept json
+// @Produce json
+// @Success 200 {object} map[string]interface{}
+// @Router /api/v1/admin/analytics/invitation-ranking/cache-status [get]
+func (h *AnalyticsHandler) GetInvitationCacheStatus(c *gin.Context) {
+	service := analytics.NewInvitationRankingService()
+
+	status, err := service.GetCacheStatus()
+	if err != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(500, "获取缓存状态失败: "+err.Error()))
+		return
+	}
+
+	middleware.Success(c, "获取缓存状态成功", status)
 }

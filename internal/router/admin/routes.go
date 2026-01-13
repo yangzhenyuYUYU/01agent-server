@@ -1,4 +1,4 @@
-﻿package admin
+package admin
 
 import (
 	"01agent_server/internal/middleware"
@@ -503,6 +503,28 @@ func SetupAdminRoutes(r *gin.Engine) {
 
 		// 流量来源分析
 		analyticsGroup.GET("/traffic/source-distribution", analyticsHandler.GetRegistrationSourceDistribution)
+
+		// 场景使用分析
+		analyticsGroup.GET("/scene-usage/report", analyticsHandler.GetSceneUsageReport) // 场景使用综合报告
+		analyticsGroup.GET("/scene-ranking", GetSceneRanking)                           // 场景使用排名（每日/每周/每月）
+		analyticsGroup.GET("/user-ranking", GetUserUsageRanking)                        // 用户使用排名（每日/每周/每月）
+
+		// 首充触发点分析
+		analyticsGroup.GET("/payment-trigger", GetFirstPaymentTriggerAnalysis)       // 获取首充触发点分析
+		analyticsGroup.GET("/payment-trigger/user", GetUserFirstPaymentTrigger)      // 获取单个用户的首充触发点
+		analyticsGroup.GET("/payment-trigger/insights", GetPaymentTriggerInsights)   // 获取首充触发点洞察
+
+		// 续费用户统计
+		analyticsGroup.GET("/renewal-ranking", GetRenewalRanking)           // 获取续费用户排行榜
+		analyticsGroup.GET("/renewal-summary", GetRenewalSummary)           // 获取续费统计汇总
+		analyticsGroup.GET("/renewal-detail/:user_id", GetUserRenewalDetail) // 获取用户续费详情
+
+		// 邀请用户排名（基于缓存表，性能优化版）
+		analyticsGroup.GET("/invitation-ranking-v2", analyticsHandler.GetInvitationRankingV2)          // 获取邀请排行榜V2（推荐）
+		analyticsGroup.GET("/invitation-metrics", analyticsHandler.GetInvitationSystemMetrics)         // 获取邀请系统指标
+		analyticsGroup.GET("/invitation-detail/:user_id", analyticsHandler.GetUserInvitationDetail)    // 获取用户邀请详情
+		analyticsGroup.POST("/invitation-ranking/refresh", analyticsHandler.RefreshInvitationRankingCache) // 手动刷新缓存
+		analyticsGroup.GET("/invitation-ranking/cache-status", analyticsHandler.GetInvitationCacheStatus) // 获取缓存状态
 	}
 
 	// 会员统计接口（需要管理员权限）
