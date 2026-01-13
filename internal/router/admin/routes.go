@@ -431,6 +431,8 @@ func SetupAdminRoutes(r *gin.Engine) {
 	{
 		commissionAdminGroup.GET("/overview", adminHandler.GetCommissionOverview)
 		commissionAdminGroup.GET("/list", adminHandler.GetCommissionList)
+		commissionAdminGroup.GET("/user/:user_id/distribution", adminHandler.GetUserCommissionDistribution) // 获取用户佣金分布统计（不含被邀请人列表）
+		commissionAdminGroup.GET("/user/:user_id/invitees", adminHandler.GetUserInviteeList)                // 获取用户的被邀请人详细列表
 	}
 
 	// 管理员认证接口（不需要JWT认证）
