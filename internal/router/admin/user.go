@@ -510,6 +510,9 @@ type UserV2ListRequest struct {
 	EndDate             *string  `json:"end_date"`
 	OrderBy             *string  `json:"order_by"`
 	OrderDirection      string   `json:"order_direction"`
+	HasPaidOrder        *bool    `json:"has_paid_order"`   // 是否有充值记录（非兑换码的支付成功订单）
+	OrderKeywords       []string `json:"order_keywords"`   // 订单关键词筛选（AND逻辑，必须购买所有关键词的产品）
+	ContainKeywords     []string `json:"contain_keywords"` // 订单关键词筛选（OR逻辑，购买任意一个关键词的产品即可）
 }
 
 // UserV2List 用户列表查询接口V2
@@ -731,6 +734,62 @@ func (h *AdminHandler) UserV2List(c *gin.Context) {
 	}
 	if req.MaxCredits != nil {
 		query = query.Where("credits <= ?", int(*req.MaxCredits))
+	}
+
+	// 是否有充值记录筛选（非兑换码的支付成功订单）
+	if req.HasPaidOrder != nil {
+		if *req.HasPaidOrder {
+			// 筛选有充值记录的用户
+			query = query.Where("user_id IN (?)",
+				repository.DB.Table("trades").
+					Select("DISTINCT user_id").
+					Where("payment_status = ? AND payment_channel != ? AND trade_type != ?",
+						models.PaymentStatusSuccess,
+						models.PaymentChannelActivation,
+						models.TradeTypeActivation))
+		} else {
+			// 筛选没有充值记录的用户
+			query = query.Where("user_id NOT IN (?)",
+				repository.DB.Table("trades").
+					Select("DISTINCT user_id").
+					Where("payment_status = ? AND payment_channel != ? AND trade_type != ?",
+						models.PaymentStatusSuccess,
+						models.PaymentChannelActivation,
+						models.TradeTypeActivation))
+		}
+	}
+
+	// 订单关键词筛选 - AND逻辑（必须购买所有关键词的产品）
+	if len(req.OrderKeywords) > 0 {
+		for _, keyword := range req.OrderKeywords {
+			// 每个关键词都要求用户至少有一个订单包含该关键词
+			query = query.Where("user_id IN (?)",
+				repository.DB.Table("trades").
+					Select("DISTINCT user_id").
+					Where("payment_status = ? AND payment_channel != ? AND trade_type != ? AND title LIKE ?",
+						models.PaymentStatusSuccess,
+						models.PaymentChannelActivation,
+						models.TradeTypeActivation,
+						"%"+keyword+"%"))
+		}
+	}
+
+	// 订单关键词筛选 - OR逻辑（购买任意一个关键词的产品即可）
+	if len(req.ContainKeywords) > 0 {
+		// 构建多个LIKE条件，用OR连接
+		orConditions := make([]string, 0, len(req.ContainKeywords))
+		args := make([]interface{}, 0, len(req.ContainKeywords)*4)
+
+		for _, keyword := range req.ContainKeywords {
+			orConditions = append(orConditions, "(payment_status = ? AND payment_channel != ? AND trade_type != ? AND title LIKE ?)")
+			args = append(args, models.PaymentStatusSuccess, models.PaymentChannelActivation, models.TradeTypeActivation, "%"+keyword+"%")
+		}
+
+		whereClause := strings.Join(orConditions, " OR ")
+		query = query.Where("user_id IN (?)",
+			repository.DB.Table("trades").
+				Select("DISTINCT user_id").
+				Where(whereClause, args...))
 	}
 
 	// 排序

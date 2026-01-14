@@ -31,6 +31,7 @@ func (h *AdminHandler) GetTradeV2List(c *gin.Context) {
 		Phone          *string  `json:"phone"`
 		MinAmount      *float64 `json:"min_amount"`
 		MaxAmount      *float64 `json:"max_amount"`
+		Keywords       []string `json:"keywords"` // 标题关键词模糊查询
 		OrderBy        *string  `json:"order_by"`
 		OrderDirection *string  `json:"order_direction"` // asc | desc
 	}
@@ -160,6 +161,17 @@ func (h *AdminHandler) GetTradeV2List(c *gin.Context) {
 		}
 	}
 
+	// 标题关键词模糊查询（OR 条件）
+	if len(req.Keywords) > 0 {
+		titleQuery := repository.DB.Where("1 = 0") // 初始化一个永远不满足的条件
+		for _, keyword := range req.Keywords {
+			if keyword != "" {
+				titleQuery = titleQuery.Or("title LIKE ?", "%"+keyword+"%")
+			}
+		}
+		query = query.Where(titleQuery)
+	}
+
 	// 排序 - 如果使用了 JOIN，需要指定表名
 	orderByField := *req.OrderBy
 	if needJoinUser && orderByField != "" {
@@ -216,6 +228,15 @@ func (h *AdminHandler) GetTradeV2List(c *gin.Context) {
 			}
 			if req.MaxAmount != nil {
 				baseQuery = baseQuery.Where("amount <= ?", *req.MaxAmount)
+			}
+			if len(req.Keywords) > 0 {
+				titleQuery := repository.DB.Where("1 = 0")
+				for _, keyword := range req.Keywords {
+					if keyword != "" {
+						titleQuery = titleQuery.Or("title LIKE ?", "%"+keyword+"%")
+					}
+				}
+				baseQuery = baseQuery.Where(titleQuery)
 			}
 			baseQuery = baseQuery.Where("user_id IN ?", userIDs)
 
