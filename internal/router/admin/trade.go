@@ -976,6 +976,77 @@ func (h *AdminHandler) GetUserProductionDetail(c *gin.Context) {
 	middleware.Success(c, "success", result)
 }
 
+// GetUserTradeOverview 获取用户交易总览
+func (h *AdminHandler) GetUserTradeOverview(c *gin.Context) {
+	userID := c.Param("user_id")
+	if userID == "" {
+		middleware.HandleError(c, middleware.NewBusinessError(400, "用户ID不能为空"))
+		return
+	}
+
+	// 查询用户所有交易，排除兑换码相关订单
+	var trades []models.Trade
+	query := repository.DB.Where("user_id = ?", userID).
+		Where("trade_type NOT IN ?", []string{"activation", "activation_refund"})
+
+	// 添加调试日志
+	repository.Logger.Info(fmt.Sprintf("GetUserTradeOverview - Querying trades for user_id: %s", userID))
+
+	if err := query.Find(&trades).Error; err != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(500, "查询失败: "+err.Error()))
+		return
+	}
+
+	repository.Logger.Info(fmt.Sprintf("GetUserTradeOverview - Found %d trades for user_id: %s", len(trades), userID))
+
+	// 初始化统计数据
+	overview := gin.H{
+		"total_count":     0,
+		"success_count":   0,
+		"total_amount":    0.0,
+		"pending_count":   0,
+		"pending_amount":  0.0,
+		"refunded_count":  0,
+		"refunded_amount": 0.0,
+	}
+
+	// 统计各种数据
+	totalCount := len(trades)
+	successCount := 0
+	totalAmount := 0.0
+	pendingCount := 0
+	pendingAmount := 0.0
+	refundedCount := 0
+	refundedAmount := 0.0
+
+	for i, trade := range trades {
+		repository.Logger.Info(fmt.Sprintf("Trade[%d]: ID=%d, UserID=%s, Amount=%.2f, Status=%s, Type=%s",
+			i, trade.ID, trade.UserID, trade.Amount, trade.PaymentStatus, trade.TradeType))
+
+		switch trade.PaymentStatus {
+		case "success", "finished":
+			successCount++
+			totalAmount += trade.Amount
+		case "pending":
+			pendingCount++
+			pendingAmount += trade.Amount
+		case "refunded":
+			refundedCount++
+			refundedAmount += trade.Amount
+		}
+	}
+
+	overview["total_count"] = totalCount
+	overview["success_count"] = successCount
+	overview["total_amount"] = totalAmount
+	overview["pending_count"] = pendingCount
+	overview["pending_amount"] = pendingAmount
+	overview["refunded_count"] = refundedCount
+	overview["refunded_amount"] = refundedAmount
+
+	middleware.Success(c, "success", overview)
+}
+
 // GetUserProductionListForCRUD 获取用户产品列表（用于标准CRUD接口，带关联信息）
 func (h *AdminHandler) GetUserProductionListForCRUD(c *gin.Context) {
 	var req struct {
