@@ -25,6 +25,204 @@ func (h *AdminHandler) GetTemplateDetail(c *gin.Context) {
 func (h *AdminHandler) CreateTemplate(c *gin.Context) {
 }
 
+// CreatePublicTemplate 创建官方模板（管理员接口）
+func (h *AdminHandler) CreatePublicTemplate(c *gin.Context) {
+	var req struct {
+		TemplateID    string                 `json:"template_id" binding:"required"`
+		Name          string                 `json:"name" binding:"required"`
+		NameEn        *string                `json:"name_en"`
+		Description   *string                `json:"description"`
+		Author        string                 `json:"author"`
+		TemplateType  *int                   `json:"template_type"`
+		Status        *int                   `json:"status"`
+		PriceType     *int                   `json:"price_type"`
+		Price         *float64               `json:"price"`
+		OriginalPrice *float64               `json:"original_price"`
+		IsPublic      *bool                  `json:"is_public"`
+		IsFeatured    *bool                  `json:"is_featured"`
+		IsOfficial    *bool                  `json:"is_official"`
+		PreviewURL    *string                `json:"preview_url"`
+		ThumbnailURL  *string                `json:"thumbnail_url"`
+		PrimaryColor  *string                `json:"primary_color"`
+		Tags          interface{}            `json:"tags"`
+		Category      *string                `json:"category"`
+		SortOrder     *int                   `json:"sort_order"`
+		TemplateData  map[string]interface{} `json:"template_data"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(400, "参数错误: "+err.Error()))
+		return
+	}
+
+	// 验证必填字段
+	templateID := strings.TrimSpace(req.TemplateID)
+	if templateID == "" {
+		middleware.HandleError(c, middleware.NewBusinessError(400, "模板ID不能为空"))
+		return
+	}
+
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		middleware.HandleError(c, middleware.NewBusinessError(400, "模板名称不能为空"))
+		return
+	}
+
+	// 检查模板ID是否已存在
+	var existingTemplate models.PublicTemplate
+	if err := repository.DB.Where("template_id = ?", templateID).First(&existingTemplate).Error; err == nil {
+		middleware.HandleError(c, middleware.NewBusinessError(400, fmt.Sprintf("模板ID '%s' 已存在", templateID)))
+		return
+	} else if err != gorm.ErrRecordNotFound {
+		middleware.HandleError(c, middleware.NewBusinessError(500, "查询失败: "+err.Error()))
+		return
+	}
+
+	// 设置默认值
+	author := strings.TrimSpace(req.Author)
+	if author == "" {
+		author = "system"
+	}
+
+	templateType := models.TemplateTypeUnified
+	if req.TemplateType != nil {
+		templateType = models.TemplateType(*req.TemplateType)
+	}
+
+	status := models.TemplateStatusDraft
+	if req.Status != nil {
+		status = models.TemplateStatus(*req.Status)
+	}
+
+	priceType := models.PriceTypeFree
+	if req.PriceType != nil {
+		priceType = models.PriceType(*req.PriceType)
+	}
+
+	price := 0.0
+	if req.Price != nil {
+		price = *req.Price
+	}
+
+	isPublic := true
+	if req.IsPublic != nil {
+		isPublic = *req.IsPublic
+	}
+
+	isFeatured := false
+	if req.IsFeatured != nil {
+		isFeatured = *req.IsFeatured
+	}
+
+	isOfficial := true
+	if req.IsOfficial != nil {
+		isOfficial = *req.IsOfficial
+	}
+
+	primaryColor := "#000000"
+	if req.PrimaryColor != nil && strings.TrimSpace(*req.PrimaryColor) != "" {
+		primaryColor = strings.TrimSpace(*req.PrimaryColor)
+	}
+
+	sortOrder := 0
+	if req.SortOrder != nil {
+		sortOrder = *req.SortOrder
+	}
+
+	// 构建模板对象
+	template := models.PublicTemplate{
+		TemplateID:   templateID,
+		Name:         name,
+		NameEn:       req.NameEn,
+		Description:  req.Description,
+		Author:       author,
+		TemplateType: templateType,
+		Status:       status,
+		PriceType:    priceType,
+		Price:        price,
+		IsPublic:     isPublic,
+		IsFeatured:   isFeatured,
+		IsOfficial:   isOfficial,
+		PreviewURL:   req.PreviewURL,
+		ThumbnailURL: req.ThumbnailURL,
+		PrimaryColor: primaryColor,
+		Category:     req.Category,
+		SortOrder:    sortOrder,
+	}
+
+	// 设置原价
+	if req.OriginalPrice != nil && *req.OriginalPrice > 0 {
+		template.OriginalPrice = req.OriginalPrice
+	}
+
+	// 处理tags
+	if req.Tags != nil {
+		if tagsJSON, err := json.Marshal(req.Tags); err == nil {
+			tagsStr := string(tagsJSON)
+			template.Tags = &tagsStr
+		}
+	}
+
+	// 处理template_data
+	if req.TemplateData != nil {
+		if templateDataJSON, err := json.Marshal(req.TemplateData); err == nil {
+			templateDataStr := string(templateDataJSON)
+			template.TemplateData = &templateDataStr
+		}
+	}
+
+	// 如果状态为已发布，设置发布时间
+	if status == models.TemplateStatusPublished {
+		now := time.Now()
+		template.PublishedAt = &now
+	}
+
+	// 创建模板
+	if err := repository.DB.Create(&template).Error; err != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(500, "创建失败: "+err.Error()))
+		return
+	}
+
+	// 生成缩略图HTML
+	sectionHTML := ""
+	thumbnailContent := tools.GetThumbnailContent()
+	processor := tools.NewUnifiedMarkdownProcessor()
+	if processedHTML, err := processor.ProcessMarkdown(thumbnailContent, template.TemplateID); err == nil {
+		sectionHTML = processedHTML
+	}
+
+	nameEn := tools.GetStringValue(template.NameEn)
+	if nameEn == "" {
+		nameEn = template.Name
+	}
+
+	middleware.Success(c, "模板创建成功", gin.H{
+		"id":             template.TemplateID,
+		"template_id":    template.TemplateID,
+		"name":           template.Name,
+		"name_en":        nameEn,
+		"description":    tools.GetStringValue(template.Description),
+		"author":         template.Author,
+		"template_type":  template.TemplateType,
+		"status":         template.Status,
+		"price_type":     template.PriceType,
+		"price":          template.Price,
+		"original_price": template.OriginalPrice,
+		"is_public":      template.IsPublic,
+		"is_featured":    template.IsFeatured,
+		"is_official":    template.IsOfficial,
+		"preview_url":    tools.GetStringValue(template.PreviewURL),
+		"thumbnail_url":  tools.GetStringValue(template.ThumbnailURL),
+		"primary_color":  template.PrimaryColor,
+		"tags":           template.Tags,
+		"category":       tools.GetStringValue(template.Category),
+		"sort_order":     template.SortOrder,
+		"section_html":   sectionHTML,
+		"created_at":     template.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		"updated_at":     template.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
+	})
+}
+
 // GetPublicTemplates 获取公开模板列表（管理员接口，包含所有状态）
 func (h *AdminHandler) GetPublicTemplates(c *gin.Context) {
 	var req struct {
@@ -589,15 +787,13 @@ func (h *AdminHandler) UpdatePublicTemplate(c *gin.Context) {
 	})
 }
 
-// DeletePublicTemplate 删除官方模板
+// DeletePublicTemplate 删除官方模板（硬删除）
 func (h *AdminHandler) DeletePublicTemplate(c *gin.Context) {
 	templateID := c.Param("template_id")
 	if templateID == "" {
 		middleware.HandleError(c, middleware.NewBusinessError(400, "模板ID不能为空"))
 		return
 	}
-
-	hardDelete := c.DefaultQuery("hard_delete", "false") == "true"
 
 	var template models.PublicTemplate
 	if err := repository.DB.Where("template_id = ?", templateID).First(&template).Error; err != nil {
@@ -611,33 +807,16 @@ func (h *AdminHandler) DeletePublicTemplate(c *gin.Context) {
 
 	templateName := template.Name
 
-	if hardDelete {
-		// 物理删除
-		if err := repository.DB.Delete(&template).Error; err != nil {
-			middleware.HandleError(c, middleware.NewBusinessError(500, "删除失败: "+err.Error()))
-			return
-		}
-		middleware.Success(c, "模板已物理删除", gin.H{
-			"id":          templateID,
-			"template_id": templateID,
-			"name":        templateName,
-			"hard_delete": true,
-			"deleted_at":  time.Now().Format("2006-01-02T15:04:05Z07:00"),
-		})
-	} else {
-		// 软删除
-		if err := repository.DB.Model(&template).Update("status", models.TemplateStatusDeleted).Error; err != nil {
-			middleware.HandleError(c, middleware.NewBusinessError(500, "删除失败: "+err.Error()))
-			return
-		}
-		// 重新查询以获取更新后的状态
-		repository.DB.Where("template_id = ?", templateID).First(&template)
-		middleware.Success(c, "模板已删除（软删除）", gin.H{
-			"id":          templateID,
-			"template_id": templateID,
-			"name":        templateName,
-			"hard_delete": false,
-			"deleted_at":  time.Now().Format("2006-01-02T15:04:05Z07:00"),
-		})
+	// 物理删除
+	if err := repository.DB.Delete(&template).Error; err != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(500, "删除失败: "+err.Error()))
+		return
 	}
+
+	middleware.Success(c, "模板已删除", gin.H{
+		"id":          templateID,
+		"template_id": templateID,
+		"name":        templateName,
+		"deleted_at":  time.Now().Format("2006-01-02T15:04:05Z07:00"),
+	})
 }

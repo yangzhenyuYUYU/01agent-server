@@ -222,6 +222,7 @@ func SetupAdminRoutes(r *gin.Engine) {
 	templatesGroup := admin.Group("/templates")
 	templatesGroup.Use(middleware.AdminAuth())
 	{
+		templatesGroup.POST("/public", adminHandler.CreatePublicTemplate)
 		templatesGroup.GET("/public", adminHandler.GetPublicTemplates)
 		templatesGroup.GET("/public/:template_id", adminHandler.GetPublicTemplateDetail)
 		templatesGroup.PUT("/public/:template_id", adminHandler.UpdatePublicTemplate)
