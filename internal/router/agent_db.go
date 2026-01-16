@@ -335,18 +335,7 @@ func (h *AgentDBHandler) DeleteThread(c *gin.Context) {
 	userID, _ := middleware.GetCurrentUserID(c)
 	threadID := c.Param("thread_id")
 
-	// 查询线程记录
-	var thread models.CopilotChatThread
-	if err := h.db.Where("thread_id = ? AND user_id = ?", threadID, userID).First(&thread).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			middleware.HandleError(c, middleware.NewBusinessError(http.StatusNotFound, "线程不存在"))
-			return
-		}
-		middleware.HandleError(c, middleware.NewBusinessError(http.StatusBadRequest, fmt.Sprintf("查询失败: %v", err)))
-		return
-	}
-
-	// 使用事务批量删除关联记录，提升性能
+	// 直接在事务中执行删除，避免先查询再删除的两次数据库访问
 	tx := h.db.Begin()
 	defer func() {
 		if r := recover(); r != nil {
@@ -354,7 +343,10 @@ func (h *AgentDBHandler) DeleteThread(c *gin.Context) {
 		}
 	}()
 
-	// 删除关联的会话记录 - 使用原生SQL提升性能
+	// 优化删除顺序：按照依赖关系删除，避免外键约束问题
+	// 注意：如果数据库有外键约束，需要按照正确的顺序删除
+
+	// 1. 先删除会话记录 - session 可能依赖 workflow
 	result := tx.Exec("DELETE FROM copilot_chat_sessions WHERE thread_id = ? AND user_id = ?", threadID, userID)
 	if result.Error != nil {
 		tx.Rollback()
@@ -362,15 +354,7 @@ func (h *AgentDBHandler) DeleteThread(c *gin.Context) {
 		return
 	}
 
-	// 删除关联的工作流记录 - 根据Python代码逻辑，使用workflow_id=thread_id，使用原生SQL
-	result = tx.Exec("DELETE FROM copilot_workflow_records WHERE workflow_id = ? AND user_id = ?", threadID, userID)
-	if result.Error != nil {
-		tx.Rollback()
-		middleware.HandleError(c, middleware.NewBusinessError(http.StatusBadRequest, fmt.Sprintf("删除工作流记录失败: %v", result.Error)))
-		return
-	}
-
-	// 删除关联的Token使用记录 - 根据Python代码逻辑，使用workflow_id=thread_id，使用原生SQL
+	// 2. 删除Token使用记录 - 通常依赖 workflow
 	result = tx.Exec("DELETE FROM token_usage_records WHERE workflow_id = ? AND user_id = ?", threadID, userID)
 	if result.Error != nil {
 		tx.Rollback()
@@ -378,7 +362,15 @@ func (h *AgentDBHandler) DeleteThread(c *gin.Context) {
 		return
 	}
 
-	// 删除线程记录 - 使用原生SQL
+	// 3. 删除工作流记录 - 最后删除 workflow（可能被上面两个表引用）
+	result = tx.Exec("DELETE FROM copilot_workflow_records WHERE workflow_id = ? AND user_id = ?", threadID, userID)
+	if result.Error != nil {
+		tx.Rollback()
+		middleware.HandleError(c, middleware.NewBusinessError(http.StatusBadRequest, fmt.Sprintf("删除工作流记录失败: %v", result.Error)))
+		return
+	}
+
+	// 最后删除线程记录 - 删除主记录并检查是否存在
 	result = tx.Exec("DELETE FROM copilot_chat_threads WHERE thread_id = ? AND user_id = ?", threadID, userID)
 	if result.Error != nil {
 		tx.Rollback()
@@ -386,10 +378,10 @@ func (h *AgentDBHandler) DeleteThread(c *gin.Context) {
 		return
 	}
 
-	// 检查是否真的删除了线程记录
+	// 检查线程记录是否存在
 	if result.RowsAffected == 0 {
 		tx.Rollback()
-		middleware.HandleError(c, middleware.NewBusinessError(http.StatusNotFound, "线程记录不存在或已被删除"))
+		middleware.HandleError(c, middleware.NewBusinessError(http.StatusNotFound, "线程不存在"))
 		return
 	}
 
