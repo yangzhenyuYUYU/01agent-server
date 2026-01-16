@@ -32,9 +32,9 @@ func NewArticleEditHandler() *ArticleEditHandler {
 // Request models
 type ArticleEditCreateRequest struct {
 	ArticleTaskID uuid.UUID              `json:"article_task_id" binding:"required"`
-	Title         string                 `json:"title" binding:"required"`
-	Theme         string                 `json:"theme" binding:"required"`
-	Content       string                 `json:"content" binding:"required"`
+	Title         *string                `json:"title"`
+	Theme         *string                `json:"theme"`
+	Content       *string                `json:"content"`
 	Params        map[string]interface{} `json:"params"`
 	IsPublic      bool                   `json:"is_public"`
 	Tags          []string               `json:"tags"`
@@ -256,7 +256,6 @@ func (h *ArticleEditHandler) simplifiedConvertToResponseFast(editTask *models.Ar
 // GetEditTaskByArticleID GET /article-edit/edit_task/:article_task_id
 func (h *ArticleEditHandler) GetEditTaskByArticleID(c *gin.Context) {
 	articleTaskID := c.Param("article_task_id")
-	userID, _ := middleware.GetCurrentUserID(c)
 
 	var articleTask models.ArticleTask
 	if err := h.db.Where("id = ?", articleTaskID).First(&articleTask).Error; err != nil {
@@ -269,7 +268,7 @@ func (h *ArticleEditHandler) GetEditTaskByArticleID(c *gin.Context) {
 	}
 
 	var editTask models.ArticleEditTask
-	if err := h.db.Where("article_task_id = ? AND user_id = ?", articleTaskID, userID).
+	if err := h.db.Where("article_task_id = ?", articleTaskID).
 		Order("created_at DESC").First(&editTask).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			middleware.HandleError(c, middleware.NewBusinessError(http.StatusNotFound, "Edit task not found"))
@@ -285,7 +284,13 @@ func (h *ArticleEditHandler) GetEditTaskByArticleID(c *gin.Context) {
 		return
 	}
 
-	middleware.Success(c, "Success", data)
+	// 将响应数据转换为 map 并添加 author_id 字段
+	dataMap := make(map[string]interface{})
+	dataBytes, _ := json.Marshal(data)
+	json.Unmarshal(dataBytes, &dataMap)
+	dataMap["author_id"] = articleTask.UserID
+
+	middleware.Success(c, "Success", dataMap)
 }
 
 // CreateEditTask POST /article-edit/create
@@ -304,6 +309,28 @@ func (h *ArticleEditHandler) CreateEditTask(c *gin.Context) {
 		return
 	}
 
+	// 从请求或 articleTask 中获取默认值
+	title := ""
+	if req.Title != nil && *req.Title != "" {
+		title = *req.Title
+	} else if articleTask.Title != nil {
+		title = *articleTask.Title
+	}
+
+	theme := "default"
+	if req.Theme != nil && *req.Theme != "" {
+		theme = *req.Theme
+	} else if articleTask.Theme != nil && *articleTask.Theme != "" {
+		theme = *articleTask.Theme
+	}
+
+	content := ""
+	if req.Content != nil && *req.Content != "" {
+		content = *req.Content
+	} else if articleTask.Content != nil {
+		content = *articleTask.Content
+	}
+
 	var tagsJSON *string
 	if len(req.Tags) > 0 {
 		tagsBytes, _ := json.Marshal(req.Tags)
@@ -320,23 +347,53 @@ func (h *ArticleEditHandler) CreateEditTask(c *gin.Context) {
 
 	articleTaskIDStr := req.ArticleTaskID.String()
 	var editTask models.ArticleEditTask
-	err := h.db.Where("user_id = ? AND article_task_id = ?", userID, articleTaskIDStr).
+	created := h.db.Where("user_id = ? AND article_task_id = ?", userID, articleTaskIDStr).
 		FirstOrCreate(&editTask, models.ArticleEditTask{
 			ID:            uuid.New().String(),
 			UserID:        userID,
 			ArticleTaskID: &articleTaskIDStr,
-			Title:         req.Title,
-			Theme:         req.Theme,
-			Content:       req.Content,
+			Title:         title,
+			Theme:         theme,
+			Content:       content,
 			IsPublic:      req.IsPublic,
 			Tags:          tagsJSON,
 			Status:        models.ArticleEditStatusEditing,
 			Params:        paramsJSON,
 		}).Error
 
-	if err != nil {
-		middleware.HandleError(c, middleware.NewBusinessError(http.StatusInternalServerError, fmt.Sprintf("Create failed: %v", err)))
+	if created != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(http.StatusInternalServerError, fmt.Sprintf("Create failed: %v", created)))
 		return
+	}
+
+	// 如果记录已存在且请求提供了新值，则更新
+	updates := make(map[string]interface{})
+	if req.Title != nil && *req.Title != "" {
+		updates["title"] = *req.Title
+	}
+	if req.Theme != nil && *req.Theme != "" {
+		updates["theme"] = *req.Theme
+	}
+	if req.Content != nil && *req.Content != "" {
+		updates["content"] = *req.Content
+	}
+	if req.Params != nil {
+		paramsBytes, _ := json.Marshal(req.Params)
+		updates["params"] = string(paramsBytes)
+	}
+	if len(req.Tags) > 0 {
+		tagsBytes, _ := json.Marshal(req.Tags)
+		updates["tags"] = string(tagsBytes)
+	}
+	updates["is_public"] = req.IsPublic
+
+	if len(updates) > 0 {
+		if err := h.db.Model(&editTask).Updates(updates).Error; err != nil {
+			middleware.HandleError(c, middleware.NewBusinessError(http.StatusInternalServerError, fmt.Sprintf("Update failed: %v", err)))
+			return
+		}
+		// 重新查询以获取更新后的数据
+		h.db.Where("id = ?", editTask.ID).First(&editTask)
 	}
 
 	data, err := h.convertToResponse(&editTask, true, &articleTask)
@@ -671,17 +728,22 @@ func (h *ArticleEditHandler) GetPublishConfig(c *gin.Context) {
 func SetupArticleEditRoutes(r *gin.Engine) {
 	handler := NewArticleEditHandler()
 	articleEdit := r.Group("/api/v1/article-edit")
-	articleEdit.Use(middleware.JWTAuth())
+
+	// 不需要认证的接口
+	articleEdit.GET("/edit_task/:article_task_id", handler.GetEditTaskByArticleID)
+
+	// 需要认证的接口
+	articleEditWithAuth := articleEdit.Group("")
+	articleEditWithAuth.Use(middleware.JWTAuth())
 	{
-		articleEdit.GET("/edit_task/:article_task_id", handler.GetEditTaskByArticleID)
-		articleEdit.POST("/create", handler.CreateEditTask)
-		articleEdit.GET("/drafts", handler.GetEditDrafts)
-		articleEdit.GET("/:edit_task_id", handler.GetEditTask)
-		articleEdit.PUT("/:edit_task_id", handler.UpdateEditTask)
-		articleEdit.DELETE("/:edit_task_id", handler.DeleteEditTask)
-		articleEdit.PUT("/:edit_task_id/publish", handler.PublishEditTask)
-		articleEdit.GET("/:edit_task_id/publish-status", handler.GetPublishStatus)
-		articleEdit.POST("/:edit_task_id/publish-config", handler.SavePublishConfig)
-		articleEdit.GET("/:edit_task_id/publish-config", handler.GetPublishConfig)
+		articleEditWithAuth.POST("/create", handler.CreateEditTask)
+		articleEditWithAuth.GET("/drafts", handler.GetEditDrafts)
+		articleEditWithAuth.GET("/:edit_task_id", handler.GetEditTask)
+		articleEditWithAuth.PUT("/:edit_task_id", handler.UpdateEditTask)
+		articleEditWithAuth.DELETE("/:edit_task_id", handler.DeleteEditTask)
+		articleEditWithAuth.PUT("/:edit_task_id/publish", handler.PublishEditTask)
+		articleEditWithAuth.GET("/:edit_task_id/publish-status", handler.GetPublishStatus)
+		articleEditWithAuth.POST("/:edit_task_id/publish-config", handler.SavePublishConfig)
+		articleEditWithAuth.GET("/:edit_task_id/publish-config", handler.GetPublishConfig)
 	}
 }
