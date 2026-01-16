@@ -347,7 +347,7 @@ func (h *ArticleEditHandler) CreateEditTask(c *gin.Context) {
 
 	articleTaskIDStr := req.ArticleTaskID.String()
 	var editTask models.ArticleEditTask
-	created := h.db.Where("user_id = ? AND article_task_id = ?", userID, articleTaskIDStr).
+	err := h.db.Where("user_id = ? AND article_task_id = ?", userID, articleTaskIDStr).
 		FirstOrCreate(&editTask, models.ArticleEditTask{
 			ID:            uuid.New().String(),
 			UserID:        userID,
@@ -361,8 +361,8 @@ func (h *ArticleEditHandler) CreateEditTask(c *gin.Context) {
 			Params:        paramsJSON,
 		}).Error
 
-	if created != nil {
-		middleware.HandleError(c, middleware.NewBusinessError(http.StatusInternalServerError, fmt.Sprintf("Create failed: %v", created)))
+	if err != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(http.StatusInternalServerError, fmt.Sprintf("Create failed: %v", err)))
 		return
 	}
 

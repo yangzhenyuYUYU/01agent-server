@@ -42,6 +42,7 @@ func SetupRouter() *gin.Engine {
 	RegisterBlogRoutes(r)              // 博客路由
 	SetupArticleEditRoutes(r)          // 文章编辑路由
 	SetupRecordRoutes(r)               // 记录路由
+	SetupAgentDBRoutes(r)              // Agent数据库路由
 
 	// 健康检查
 	r.GET("/health", func(c *gin.Context) {
