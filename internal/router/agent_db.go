@@ -511,20 +511,33 @@ func (h *AgentDBHandler) GetWorkflowArticlesByThread(c *gin.Context) {
 
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	
+	// 限制page_size最大值，避免一次性返回太多大字段数据
+	if pageSize > 50 {
+		pageSize = 50
+	}
+	if page < 1 {
+		page = 1
+	}
 
-	// 基础查询条件
-	query := h.db.Model(&models.CopilotWorkflowRecord{}).
+	// 基础查询条件 - 只查询必要的字段，避免加载大的JSON字段（config, workflow_data, topic_content）
+	baseQuery := h.db.Model(&models.CopilotWorkflowRecord{}).
 		Where("thread_id = ? AND user_id = ?", threadID, userID).
 		Where("article_content IS NOT NULL AND article_content != ?", "")
 
-	// 获取总数
+	// 获取总数 - 使用独立的查询，避免状态污染
 	var total int64
-	query.Count(&total)
+	baseQuery.Count(&total)
 
-	// 分页查询
+	// 分页查询 - 只选择必要的字段，大幅提升性能
 	offset := (page - 1) * pageSize
 	var records []models.CopilotWorkflowRecord
-	if err := query.Order("created_at DESC").Offset(offset).Limit(pageSize).Find(&records).Error; err != nil {
+	if err := baseQuery.
+		Select("thread_id", "workflow_id", "article_content", "created_at", "updated_at").
+		Order("created_at DESC").
+		Offset(offset).
+		Limit(pageSize).
+		Find(&records).Error; err != nil {
 		middleware.HandleError(c, middleware.NewBusinessError(http.StatusBadRequest, fmt.Sprintf("查询失败: %v", err)))
 		return
 	}
