@@ -41,6 +41,7 @@ func SetupRouter() *gin.Engine {
 	digital.SetupDigitalAdminRoutes(r) // 数字人管理端路由
 	RegisterBlogRoutes(r)              // 博客路由
 	SetupArticleEditRoutes(r)          // 文章编辑路由
+	SetupRecordRoutes(r)               // 记录路由
 
 	// 健康检查
 	r.GET("/health", func(c *gin.Context) {

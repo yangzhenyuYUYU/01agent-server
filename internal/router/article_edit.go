@@ -211,6 +211,48 @@ func (h *ArticleEditHandler) simplifiedConvertToResponse(editTask *models.Articl
 	return response, nil
 }
 
+// simplifiedConvertToResponseFast 极速版转换（用于列表，最小化处理）
+func (h *ArticleEditHandler) simplifiedConvertToResponseFast(editTask *models.ArticleEditTask) *ArticleEditResponse {
+	// 处理 section_html
+	sectionHTML := ""
+	if editTask.SectionHTML != nil {
+		html := *editTask.SectionHTML
+		// 截断到 50000 字符（约 50KB），保证预览效果
+		// 如果需要完整内容，前端应该调用详情接口
+		const maxHTMLSize = 50000
+		if len(html) > maxHTMLSize {
+			sectionHTML = html[:maxHTMLSize]
+		} else {
+			sectionHTML = html
+		}
+	}
+
+	response := &ArticleEditResponse{
+		ID:          editTask.ID,
+		Title:       editTask.Title,
+		Theme:       editTask.Theme,
+		Content:     "",          // 列表不返回content，减少数据传输
+		SectionHTML: sectionHTML, // 返回保存的HTML（前端需要）
+		Status:      editTask.Status,
+		IsPublic:    editTask.IsPublic,
+		Params:      nil,        // 列表不解析params
+		Tags:        []string{}, // 列表不解析tags
+		CreatedAt:   editTask.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:   editTask.UpdatedAt.Format(time.RFC3339),
+	}
+
+	if editTask.ArticleTaskID != nil {
+		response.ArticleTaskID = *editTask.ArticleTaskID
+	}
+
+	if editTask.PublishedAt != nil {
+		publishedAt := editTask.PublishedAt.Format(time.RFC3339)
+		response.PublishedAt = &publishedAt
+	}
+
+	return response
+}
+
 // GetEditTaskByArticleID GET /article-edit/edit_task/:article_task_id
 func (h *ArticleEditHandler) GetEditTaskByArticleID(c *gin.Context) {
 	articleTaskID := c.Param("article_task_id")
@@ -333,19 +375,19 @@ func (h *ArticleEditHandler) GetEditDrafts(c *gin.Context) {
 	var total int64
 	query.Count(&total)
 
+	// 只查询必要的字段，不查询大字段 content，但保留 section_html（前端需要）
 	var items []models.ArticleEditTask
 	offset := (pageInt - 1) * pageSizeInt
-	if err := query.Order("updated_at DESC").Offset(offset).Limit(pageSizeInt).Find(&items).Error; err != nil {
+	if err := query.Select("id", "article_task_id", "user_id", "title", "theme", "status", "is_public", "tags", "params", "section_html", "published_at", "created_at", "updated_at").
+		Order("updated_at DESC").Offset(offset).Limit(pageSizeInt).Find(&items).Error; err != nil {
 		middleware.HandleError(c, middleware.NewBusinessError(http.StatusInternalServerError, fmt.Sprintf("Query failed: %v", err)))
 		return
 	}
 
 	resultItems := make([]*ArticleEditResponse, 0, len(items))
 	for i := range items {
-		item, err := h.simplifiedConvertToResponse(&items[i])
-		if err == nil {
-			resultItems = append(resultItems, item)
-		}
+		item := h.simplifiedConvertToResponseFast(&items[i])
+		resultItems = append(resultItems, item)
 	}
 
 	middleware.Success(c, "Success", gin.H{
