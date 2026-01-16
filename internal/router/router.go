@@ -10,6 +10,7 @@ import (
 	"01agent_server/internal/models"
 	"01agent_server/internal/router/admin"
 	"01agent_server/internal/router/digital"
+	"01agent_server/internal/router/short_post"
 	utils "01agent_server/internal/tools"
 
 	"github.com/gin-gonic/gin"
@@ -43,6 +44,7 @@ func SetupRouter() *gin.Engine {
 	SetupArticleEditRoutes(r)          // 文章编辑路由
 	SetupRecordRoutes(r)               // 记录路由
 	SetupAgentDBRoutes(r)              // Agent数据库路由
+	short_post.SetupShortPostRoutes(r) // 短图文路由
 
 	// 健康检查
 	r.GET("/health", func(c *gin.Context) {
