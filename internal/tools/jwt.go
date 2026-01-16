@@ -35,17 +35,17 @@ func GenerateToken(userID string, username string) (string, error) {
 	}
 
 	// 添加调试信息
-	fmt.Printf("GenerateToken - Creating token for UserID: '%s', Username: '%s'\n", userID, username)
-	fmt.Printf("JWT Config - Secret: %s, Expire: %v\n", cfg.Secret, cfg.Expire)
+	// fmt.Printf("GenerateToken - Creating token for UserID: '%s', Username: '%s'\n", userID, username)
+	// fmt.Printf("JWT Config - Secret: %s, Expire: %v\n", cfg.Secret, cfg.Expire)
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	tokenString, err := token.SignedString([]byte(cfg.Secret))
 	if err != nil {
-		fmt.Printf("GenerateToken - Error signing token: %v\n", err)
+		// fmt.Printf("GenerateToken - Error signing token: %v\n", err)
 		return "", err
 	}
 
-	fmt.Printf("GenerateToken - Token created successfully: %s\n", tokenString[:50]+"...")
+	// fmt.Printf("GenerateToken - Token created successfully: %s\n", tokenString[:50]+"...")
 	return tokenString, nil
 }
 
@@ -53,8 +53,8 @@ func GenerateToken(userID string, username string) (string, error) {
 func ParseToken(tokenString string) (*Claims, error) {
 	cfg := config.AppConfig.JWT
 
-	fmt.Printf("ParseToken - Parsing token: %s\n", tokenString[:50]+"...")
-	fmt.Printf("ParseToken - Using secret: %s\n", cfg.Secret)
+	// fmt.Printf("ParseToken - Parsing token: %s\n", tokenString[:50]+"...")
+	// fmt.Printf("ParseToken - Using secret: %s\n", cfg.Secret)
 
 	// 使用解析选项，设置验证方法
 	// 注意：JWT库会自动验证过期时间，但我们会在后面使用容差再次检查
@@ -72,7 +72,7 @@ func ParseToken(tokenString string) (*Claims, error) {
 	})
 
 	if err != nil {
-		fmt.Printf("ParseToken - Error parsing token: %v\n", err)
+		// fmt.Printf("ParseToken - Error parsing token: %v\n", err)
 		// 检查错误信息中是否包含过期相关字符串
 		errStr := strings.ToLower(err.Error())
 		if strings.Contains(errStr, "expired") || strings.Contains(errStr, "token is expired") {
@@ -85,14 +85,14 @@ func ParseToken(tokenString string) (*Claims, error) {
 	}
 
 	if claims, ok := token.Claims.(*Claims); ok {
-		fmt.Printf("ParseToken - Successfully parsed - UserID: '%s', Username: '%s'\n", claims.UserID, claims.Username)
-		fmt.Printf("ParseToken - Subject: '%s'\n", claims.Subject)
-		fmt.Printf("ParseToken - ExpiresAt: %v\n", claims.ExpiresAt)
-		fmt.Printf("ParseToken - Current time: %v\n", time.Now())
+		// fmt.Printf("ParseToken - Successfully parsed - UserID: '%s', Username: '%s'\n", claims.UserID, claims.Username)
+		// fmt.Printf("ParseToken - Subject: '%s'\n", claims.Subject)
+		// fmt.Printf("ParseToken - ExpiresAt: %v\n", claims.ExpiresAt)
+		// fmt.Printf("ParseToken - Current time: %v\n", time.Now())
 
 		// 严格检查token有效性
 		if !token.Valid {
-			fmt.Printf("ParseToken - Token marked as invalid by JWT library\n")
+			// fmt.Printf("ParseToken - Token marked as invalid by JWT library\n")
 			return nil, errors.New("invalid token")
 		}
 
@@ -102,34 +102,34 @@ func ParseToken(tokenString string) (*Claims, error) {
 			expiryTime := claims.ExpiresAt.Time
 			// 添加5秒容差，允许轻微的时钟偏差
 			leeway := 5 * time.Second
-			fmt.Printf("ParseToken - Expiry check: token expires at %v, current time %v, leeway: %v\n", expiryTime, currentTime, leeway)
+			// fmt.Printf("ParseToken - Expiry check: token expires at %v, current time %v, leeway: %v\n", expiryTime, currentTime, leeway)
 
 			// 使用容差检查，避免因时钟偏差导致的误判
 			if expiryTime.Before(currentTime.Add(-leeway)) {
-				fmt.Printf("ParseToken - Token expired! Expiry: %v, Current: %v, Diff: %v\n", expiryTime, currentTime, currentTime.Sub(expiryTime))
+				// fmt.Printf("ParseToken - Token expired! Expiry: %v, Current: %v, Diff: %v\n", expiryTime, currentTime, currentTime.Sub(expiryTime))
 				return nil, errors.New("token已过期")
 			}
 		} else {
-			fmt.Printf("ParseToken - Warning: Token has no expiry time set\n")
+			// fmt.Printf("ParseToken - Warning: Token has no expiry time set\n")
 			return nil, errors.New("token缺少过期时间")
 		}
 
 		// 检查NotBefore时间
 		if claims.NotBefore != nil && claims.NotBefore.After(currentTime) {
-			fmt.Printf("ParseToken - Token not valid yet: %v > %v\n", claims.NotBefore.Time, currentTime)
+			// fmt.Printf("ParseToken - Token not valid yet: %v > %v\n", claims.NotBefore.Time, currentTime)
 			return nil, errors.New("token尚未生效")
 		}
 
 		// 如果自定义字段为空，尝试从Subject获取UserID
 		if claims.UserID == "" && claims.Subject != "" {
-			fmt.Printf("ParseToken - UserID empty, using Subject as UserID: '%s'\n", claims.Subject)
+			// fmt.Printf("ParseToken - UserID empty, using Subject as UserID: '%s'\n", claims.Subject)
 			claims.UserID = claims.Subject
 		}
 
 		return claims, nil
 	}
 
-	fmt.Printf("ParseToken - Token invalid or claims not ok\n")
+	// fmt.Printf("ParseToken - Token invalid or claims not ok\n")
 	return nil, errors.New("invalid token")
 }
 
@@ -237,8 +237,8 @@ func IsTokenExpired(tokenString string) (bool, error) {
 	currentTime := time.Now()
 	expired := expiryTime.Before(currentTime) || expiryTime.Equal(currentTime)
 
-	fmt.Printf("IsTokenExpired - Token expires at: %v, Current time: %v, Expired: %v\n",
-		expiryTime, currentTime, expired)
+	// fmt.Printf("IsTokenExpired - Token expires at: %v, Current time: %v, Expired: %v\n",
+	// expiryTime, currentTime, expired)
 
 	return expired, nil
 }

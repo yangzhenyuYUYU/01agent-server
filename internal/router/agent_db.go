@@ -346,16 +346,56 @@ func (h *AgentDBHandler) DeleteThread(c *gin.Context) {
 		return
 	}
 
-	// 删除关联的会话记录
-	h.db.Where("thread_id = ? AND user_id = ?", threadID, userID).Delete(&models.CopilotChatSession{})
-	// 删除关联的工作流记录 - 根据Python代码逻辑，使用workflow_id=thread_id
-	h.db.Where("workflow_id = ? AND user_id = ?", threadID, userID).Delete(&models.CopilotWorkflowRecord{})
-	// 删除关联的Token使用记录 - 根据Python代码逻辑，使用workflow_id=thread_id
-	h.db.Where("workflow_id = ? AND user_id = ?", threadID, userID).Delete(&models.TokenUsageRecord{})
+	// 使用事务批量删除关联记录，提升性能
+	tx := h.db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
 
-	// 删除线程记录
-	if err := h.db.Delete(&thread).Error; err != nil {
-		middleware.HandleError(c, middleware.NewBusinessError(http.StatusBadRequest, fmt.Sprintf("删除失败: %v", err)))
+	// 删除关联的会话记录 - 使用原生SQL提升性能
+	result := tx.Exec("DELETE FROM copilot_chat_sessions WHERE thread_id = ? AND user_id = ?", threadID, userID)
+	if result.Error != nil {
+		tx.Rollback()
+		middleware.HandleError(c, middleware.NewBusinessError(http.StatusBadRequest, fmt.Sprintf("删除会话记录失败: %v", result.Error)))
+		return
+	}
+
+	// 删除关联的工作流记录 - 根据Python代码逻辑，使用workflow_id=thread_id，使用原生SQL
+	result = tx.Exec("DELETE FROM copilot_workflow_records WHERE workflow_id = ? AND user_id = ?", threadID, userID)
+	if result.Error != nil {
+		tx.Rollback()
+		middleware.HandleError(c, middleware.NewBusinessError(http.StatusBadRequest, fmt.Sprintf("删除工作流记录失败: %v", result.Error)))
+		return
+	}
+
+	// 删除关联的Token使用记录 - 根据Python代码逻辑，使用workflow_id=thread_id，使用原生SQL
+	result = tx.Exec("DELETE FROM token_usage_records WHERE workflow_id = ? AND user_id = ?", threadID, userID)
+	if result.Error != nil {
+		tx.Rollback()
+		middleware.HandleError(c, middleware.NewBusinessError(http.StatusBadRequest, fmt.Sprintf("删除Token使用记录失败: %v", result.Error)))
+		return
+	}
+
+	// 删除线程记录 - 使用原生SQL
+	result = tx.Exec("DELETE FROM copilot_chat_threads WHERE thread_id = ? AND user_id = ?", threadID, userID)
+	if result.Error != nil {
+		tx.Rollback()
+		middleware.HandleError(c, middleware.NewBusinessError(http.StatusBadRequest, fmt.Sprintf("删除线程记录失败: %v", result.Error)))
+		return
+	}
+
+	// 检查是否真的删除了线程记录
+	if result.RowsAffected == 0 {
+		tx.Rollback()
+		middleware.HandleError(c, middleware.NewBusinessError(http.StatusNotFound, "线程记录不存在或已被删除"))
+		return
+	}
+
+	// 提交事务
+	if err := tx.Commit().Error; err != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(http.StatusBadRequest, fmt.Sprintf("提交事务失败: %v", err)))
 		return
 	}
 
@@ -511,7 +551,7 @@ func (h *AgentDBHandler) GetWorkflowArticlesByThread(c *gin.Context) {
 
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
-	
+
 	// 限制page_size最大值，避免一次性返回太多大字段数据
 	if pageSize > 50 {
 		pageSize = 50

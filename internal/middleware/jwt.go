@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"fmt"
 	"net/http"
 	"strings"
 
@@ -31,11 +30,11 @@ func JWTAuth() gin.HandlerFunc {
 		}
 
 		// 解析和验证token
-		fmt.Printf("Parsing token: %s\n", tokenString[:50]+"...")
+		// fmt.Printf("Parsing token: %s\n", tokenString[:50]+"...")
 		claims, err := utils.ParseToken(tokenString)
 		if err != nil {
 			repository.Errorf("JWT parsing failed: %v", err)
-			fmt.Printf("JWT parsing error: %v\n", err)
+			// fmt.Printf("JWT parsing error: %v\n", err)
 
 			// 根据错误类型返回不同的错误信息
 			var errorMsg string
@@ -50,7 +49,7 @@ func JWTAuth() gin.HandlerFunc {
 			return
 		}
 
-		fmt.Printf("JWT parsed successfully - UserID: '%s', Username: '%s'\n", claims.UserID, claims.Username)
+		// fmt.Printf("JWT parsed successfully - UserID: '%s', Username: '%s'\n", claims.UserID, claims.Username)
 		repository.Infof("JWT parsed successfully - UserID: %s, Username: %s", claims.UserID, claims.Username)
 
 		// 将用户信息存储到上下文中
@@ -58,12 +57,12 @@ func JWTAuth() gin.HandlerFunc {
 		userID := claims.UserID
 		if userID == "" {
 			userID = claims.Subject
-			fmt.Printf("Using Subject as UserID: '%s'\n", userID)
+			// fmt.Printf("Using Subject as UserID: '%s'\n", userID)
 		}
 
 		c.Set("userID", userID)
 		c.Set("username", claims.Username)
-		fmt.Printf("Set userID to context: '%s'\n", userID)
+		// fmt.Printf("Set userID to context: '%s'\n", userID)
 
 		c.Next()
 	}
@@ -97,18 +96,14 @@ func JWTOptional() gin.HandlerFunc {
 // GetCurrentUserID 从上下文中获取当前用户ID
 func GetCurrentUserID(c *gin.Context) (string, bool) {
 	userID, exists := c.Get("userID")
-	fmt.Println("userIDStr111", userID)
-
 	if !exists {
 		return "", false
 	}
 
 	userIDStr, ok := userID.(string)
-	fmt.Println("userIDStr222", userIDStr)
 	if !ok {
 		return "", false
 	}
-	fmt.Println("userIDStr333", userIDStr)
 	return userIDStr, true
 }
 
