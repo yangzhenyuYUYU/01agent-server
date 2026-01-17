@@ -50,6 +50,7 @@ func SetupRouter() *gin.Engine {
 	SetupMarketingRoutes(r)            // 营销活动路由
 	SetupUserCustomRoutes(r)           // 用户自定义配置路由
 	SetupSystemRoutes(r)               // 系统路由（反馈和通知）
+	SetupPromptTemplateRoutes(r)       // 提示词模板路由
 
 	// 健康检查
 	r.GET("/health", func(c *gin.Context) {
