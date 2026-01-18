@@ -127,3 +127,15 @@ func (r *UserSessionRepository) UpdateLastActiveTime(sessionID int) error {
 		Where("id = ?", sessionID).
 		Update("last_active_time", time.Now()).Error
 }
+
+// GetLatestActiveSession 获取用户最新的活跃会话（用于复用token）
+func (r *UserSessionRepository) GetLatestActiveSession(userID string) (*models.UserSession, error) {
+	var session models.UserSession
+	err := r.db.Where("user_id = ? AND status = ? AND token IS NOT NULL AND token != ''", userID, 1).
+		Order("created_at DESC").
+		First(&session).Error
+	if err != nil {
+		return nil, err
+	}
+	return &session, nil
+}

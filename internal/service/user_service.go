@@ -489,10 +489,34 @@ func (s *UserService) LoginWithTypeV2(req *LoginRequest, ipAddress, deviceID, ol
 		username = user.UserID
 	}
 
-	// 生成JWT token
-	token, err := tools.GenerateToken(user.UserID, username)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate token: %w", err)
+	// 尝试复用现有有效的token（优先检查现有会话）
+	var token string
+	var reuseExistingSession bool
+	existingSession, err := s.sessionRepo.GetLatestActiveSession(user.UserID)
+	if err == nil && existingSession != nil && existingSession.Token != nil && *existingSession.Token != "" {
+		// 检查token是否在有效期内
+		// 获取JWT过期时间配置（默认720小时=30天）
+		tokenExpireDuration := config.AppConfig.JWT.Expire
+		if tokenExpireDuration == 0 {
+			tokenExpireDuration = 720 * time.Hour // 默认30天
+		}
+
+		// 计算token已存在的时间
+		tokenAge := time.Since(existingSession.CreatedAt)
+		if tokenAge < tokenExpireDuration {
+			// token仍在有效期内，复用现有token
+			token = *existingSession.Token
+			reuseExistingSession = true
+			repository.Infof("Reusing existing valid token for user %s, token age: %v", user.UserID, tokenAge)
+		}
+	}
+
+	// 如果没有可复用的token，生成新的JWT token
+	if token == "" {
+		token, err = tools.GenerateToken(user.UserID, username)
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate token: %w", err)
+		}
 	}
 
 	// 获取用户允许的最大设备数
@@ -501,24 +525,39 @@ func (s *UserService) LoginWithTypeV2(req *LoginRequest, ipAddress, deviceID, ol
 	// 根据用户角色处理会话
 	loginMsg := s.handleSessionByRole(user, token, maxSessions)
 
-	// 创建会话记录
-	session := &models.UserSession{
-		UserID:         user.UserID,
-		Token:          tools.StringPtr(token),
-		LoginType:      "web",
-		IPAddress:      ipAddress,
-		DeviceID:       tools.StringPtr(deviceID),
-		Status:         1, // 活跃
-		LastActiveTime: time.Now(),
-		CreatedAt:      time.Now(),
-	}
+	var session *models.UserSession
+	var deletedCount int64
 
-	if err := s.sessionRepo.Create(session); err != nil {
-		return nil, fmt.Errorf("failed to create session: %w", err)
-	}
+	if reuseExistingSession && existingSession != nil {
+		// 复用现有会话，更新会话信息
+		existingSession.IPAddress = ipAddress
+		existingSession.DeviceID = tools.StringPtr(deviceID)
+		existingSession.LastActiveTime = time.Now()
+		session = existingSession
 
-	// 清理会话：根据用户等级保留对应数量的在线session
-	deletedCount, _ := s.sessionRepo.CleanupSessionsKeepRecent(user.UserID, maxSessions)
+		// 更新会话的最后活跃时间和IP等信息
+		s.sessionRepo.UpdateLastActiveTime(existingSession.ID)
+		repository.Infof("Reusing existing session for user %s, session ID: %d", user.UserID, existingSession.ID)
+	} else {
+		// 创建新会话记录
+		session = &models.UserSession{
+			UserID:         user.UserID,
+			Token:          tools.StringPtr(token),
+			LoginType:      "web",
+			IPAddress:      ipAddress,
+			DeviceID:       tools.StringPtr(deviceID),
+			Status:         1, // 活跃
+			LastActiveTime: time.Now(),
+			CreatedAt:      time.Now(),
+		}
+
+		if err := s.sessionRepo.Create(session); err != nil {
+			return nil, fmt.Errorf("failed to create session: %w", err)
+		}
+
+		// 清理会话：根据用户等级保留对应数量的在线session
+		deletedCount, _ = s.sessionRepo.CleanupSessionsKeepRecent(user.UserID, maxSessions)
+	}
 
 	// 发送登录成功系统通知
 	s.sendLoginNotification(db, user, maxSessions, deletedCount)
