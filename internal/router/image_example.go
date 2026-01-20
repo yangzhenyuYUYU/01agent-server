@@ -88,20 +88,20 @@ func (h *ImageExampleHandler) GetImageExampleList(c *gin.Context) {
 		query = query.Where("tags LIKE ?", "%"+req.Tags[0]+"%")
 	}
 
-	// ExtraData 过滤：逐个键值对进行 LIKE 查询，模拟 Tortoise ORM 的 __contains 行为
-	for key, value := range req.ExtraData {
-		// 特殊处理：如果 size 是 "1080×自适应"，转换为 width:1080 查询
-		if key == "size" {
-			if size, ok := value.(string); ok && size == "1080×自适应" {
-				query = query.Where("extra_data LIKE ?", "%\"width\":1080%")
-				continue
+	// ExtraData 过滤
+	if len(req.ExtraData) > 0 {
+		// 特殊处理：如果 size 是 "1080×自适应"，只用 width:1080 查询，忽略其他字段
+		if size, ok := req.ExtraData["size"].(string); ok && size == "1080×自适应" {
+			query = query.Where("extra_data LIKE ?", "%\"width\":1080%")
+		} else {
+			// 逐个键值对进行 LIKE 查询，模拟 Tortoise ORM 的 __contains 行为
+			for key, value := range req.ExtraData {
+				valueBytes, _ := json.Marshal(value)
+				// 构造匹配模式，如 "size":"2560×1080"
+				pattern := fmt.Sprintf(`"%s":%s`, key, string(valueBytes))
+				query = query.Where("extra_data LIKE ?", "%"+pattern+"%")
 			}
 		}
-		// 将单个键值对序列化为 JSON 片段进行匹配
-		valueBytes, _ := json.Marshal(value)
-		// 构造匹配模式，如 "size":"2560×1080"
-		pattern := fmt.Sprintf(`"%s":%s`, key, string(valueBytes))
-		query = query.Where("extra_data LIKE ?", "%"+pattern+"%")
 	}
 
 	if req.ProjectType != nil && *req.ProjectType != "" {
