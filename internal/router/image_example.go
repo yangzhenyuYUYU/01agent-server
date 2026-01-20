@@ -88,16 +88,20 @@ func (h *ImageExampleHandler) GetImageExampleList(c *gin.Context) {
 		query = query.Where("tags LIKE ?", "%"+req.Tags[0]+"%")
 	}
 
-	// ExtraData 过滤
-	if req.ExtraData != nil {
-		// 特殊处理：如果size是"1080×自适应"
-		if size, ok := req.ExtraData["size"].(string); ok && size == "1080×自适应" {
-			query = query.Where("extra_data LIKE ?", "%\"width\":1080%")
-		} else {
-			// 其他情况，尝试匹配 extra_data 中的键值对
-			extraDataBytes, _ := json.Marshal(req.ExtraData)
-			query = query.Where("extra_data LIKE ?", "%"+string(extraDataBytes)+"%")
+	// ExtraData 过滤：逐个键值对进行 LIKE 查询，模拟 Tortoise ORM 的 __contains 行为
+	for key, value := range req.ExtraData {
+		// 特殊处理：如果 size 是 "1080×自适应"，转换为 width:1080 查询
+		if key == "size" {
+			if size, ok := value.(string); ok && size == "1080×自适应" {
+				query = query.Where("extra_data LIKE ?", "%\"width\":1080%")
+				continue
+			}
 		}
+		// 将单个键值对序列化为 JSON 片段进行匹配
+		valueBytes, _ := json.Marshal(value)
+		// 构造匹配模式，如 "size":"2560×1080"
+		pattern := fmt.Sprintf(`"%s":%s`, key, string(valueBytes))
+		query = query.Where("extra_data LIKE ?", "%"+pattern+"%")
 	}
 
 	if req.ProjectType != nil && *req.ProjectType != "" {
@@ -161,10 +165,10 @@ func (h *ImageExampleHandler) GetImageExampleList(c *gin.Context) {
 	}
 
 	middleware.Success(c, "success", gin.H{
-		"items":      itemsData,
-		"total":      total,
-		"page":       page,
-		"page_size":  pageSize,
+		"items":     itemsData,
+		"total":     total,
+		"page":      page,
+		"page_size": pageSize,
 	})
 }
 
@@ -510,4 +514,3 @@ func SetupImageExampleRoutes(r *gin.Engine) {
 		imageExampleGroup.POST("/reorder", handler.ReorderImageExample)
 	}
 }
-
