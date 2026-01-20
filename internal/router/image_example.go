@@ -65,6 +65,10 @@ func (h *ImageExampleHandler) GetImageExampleList(c *gin.Context) {
 		return
 	}
 
+	// DEBUG: 打印请求参数
+	reqBytes, _ := json.Marshal(req)
+	fmt.Printf("\n[DEBUG] GetImageExampleList 请求参数: %s\n", string(reqBytes))
+
 	// 设置默认值
 	page := req.Page
 	if page == 0 {
@@ -92,13 +96,16 @@ func (h *ImageExampleHandler) GetImageExampleList(c *gin.Context) {
 	if len(req.ExtraData) > 0 {
 		// 特殊处理：如果 size 是 "1080×自适应"，只用 width:1080 查询，忽略其他字段
 		if size, ok := req.ExtraData["size"].(string); ok && size == "1080×自适应" {
-			query = query.Where("extra_data LIKE ?", "%\"width\":1080%")
+			fmt.Printf("[DEBUG] ExtraData 特殊处理: size=1080×自适应, 查询 width: 1080\n")
+			// 注意：JSON 中冒号后可能有空格，如 "width": 1080
+			query = query.Where("extra_data LIKE ?", "%\"width\": 1080%")
 		} else {
 			// 逐个键值对进行 LIKE 查询，模拟 Tortoise ORM 的 __contains 行为
 			for key, value := range req.ExtraData {
 				valueBytes, _ := json.Marshal(value)
-				// 构造匹配模式，如 "size":"2560×1080"
-				pattern := fmt.Sprintf(`"%s":%s`, key, string(valueBytes))
+				// 构造匹配模式，注意 JSON 中冒号后可能有空格，如 "size": "2560×1080"
+				pattern := fmt.Sprintf(`"%s": %s`, key, string(valueBytes))
+				fmt.Printf("[DEBUG] ExtraData 过滤: key=%s, pattern=%s\n", key, pattern)
 				query = query.Where("extra_data LIKE ?", "%"+pattern+"%")
 			}
 		}
@@ -115,6 +122,26 @@ func (h *ImageExampleHandler) GetImageExampleList(c *gin.Context) {
 	if err := query.Order("sort_order ASC, created_at DESC").Offset(offset).Limit(pageSize).Find(&items).Error; err != nil {
 		middleware.HandleError(c, middleware.NewBusinessError(http.StatusInternalServerError, fmt.Sprintf("查询失败: %v", err)))
 		return
+	}
+
+	// DEBUG: 打印查询结果
+	fmt.Printf("[DEBUG] 查询结果: total=%d, items count=%d\n", total, len(items))
+	if len(items) > 0 {
+		fmt.Printf("[DEBUG] 第一条数据 extra_data: %v\n", items[0].ExtraData)
+	}
+
+	// DEBUG: 如果没有结果，查看数据库中有哪些数据
+	if total == 0 {
+		var allItems []models.ImageExample
+		h.db.Model(&models.ImageExample{}).Where("is_visible = ? AND project_type = ?", true, "other").Limit(5).Find(&allItems)
+		fmt.Printf("[DEBUG] 数据库中 project_type=other 的数据共 %d 条:\n", len(allItems))
+		for i, item := range allItems {
+			extraDataStr := "nil"
+			if item.ExtraData != nil {
+				extraDataStr = *item.ExtraData
+			}
+			fmt.Printf("[DEBUG]   %d. ID=%d, extra_data=%s\n", i+1, item.ID, extraDataStr)
+		}
 	}
 
 	// 如果 project_type 是 xiaohongshu，需要获取 images 信息
