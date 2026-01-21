@@ -474,7 +474,9 @@ func (h *RecordHandler) GetTopicList(c *gin.Context) {
 		return
 	}
 
-	currentTime := time.Now()
+	// 使用北京时间（Asia/Shanghai = 北京时间 = UTC+8）
+	beijingLoc, _ := time.LoadLocation("Asia/Shanghai")
+	currentTime := time.Now().In(beijingLoc)
 	type topicWithDiff struct {
 		topic    models.ArticleTopic
 		timeDiff float64
@@ -484,8 +486,9 @@ func (h *RecordHandler) GetTopicList(c *gin.Context) {
 	for i := range topics {
 		topic := &topics[i]
 
+		// 检查 scheduled 状态是否过期（超过10分钟未执行则标记为过期），与 Python 保持一致
 		if topic.Status != nil && *topic.Status == "scheduled" {
-			if topic.PublishTime != nil && topic.PublishTime.Add(24*time.Hour).Before(currentTime) {
+			if topic.PublishTime != nil && topic.PublishTime.Add(10*time.Minute).Before(currentTime) {
 				expired := "expired"
 				topic.Status = &expired
 				h.db.Model(topic).Update("status", "expired")
