@@ -609,13 +609,13 @@ func (h *ArticleEditHandler) GetPublishStatus(c *gin.Context) {
 
 	switch editTask.Status {
 	case models.ArticleEditStatusPublished:
-		statusInfo["message"] = "已发布成功"
+		statusInfo["message"] = "文章已发布成功公众号"
 	case models.ArticleEditStatusPending:
 		statusInfo["message"] = "正在发布中..."
 	case models.ArticleEditStatusDraft:
-		statusInfo["message"] = "已同步到草稿箱"
+		statusInfo["message"] = "文章已同步到公众号草稿箱"
 	case models.ArticleEditStatusEditing:
-		statusInfo["message"] = "正在编辑中..."
+		statusInfo["message"] = "文章正在编辑中..."
 	default:
 		statusInfo["message"] = fmt.Sprintf("未知状态: %s", editTask.Status)
 	}
