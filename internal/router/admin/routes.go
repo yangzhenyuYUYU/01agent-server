@@ -367,6 +367,7 @@ func SetupAdminRoutes(r *gin.Engine) {
 	{
 		activationCodeV2Group.GET("/list", adminHandler.GetActivationCodeList)
 		activationCodeV2Group.POST("/create", adminHandler.CreateActivationCodes)
+		activationCodeV2Group.POST("/export", adminHandler.ExportActivationCodes) // 导出兑换码CSV（POST方式）
 	}
 
 	// 积分产品管理接口（需要管理员权限）

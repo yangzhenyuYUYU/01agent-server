@@ -780,6 +780,152 @@ func (h *UserHandler) DuplicateConfigTemplate(c *gin.Context) {
 	})
 }
 
+// GetInvitedUsers 获取用户邀请关系和佣金信息
+func (h *UserHandler) GetInvitedUsers(c *gin.Context) {
+	userID, exists := middleware.GetCurrentUserID(c)
+	if !exists {
+		middleware.HandleError(c, middleware.NewBusinessError(401, "未授权访问"))
+		return
+	}
+
+	var req struct {
+		Page     int `json:"page" form:"page" binding:"min=1"`
+		PageSize int `json:"page_size" form:"page_size" binding:"min=1,max=100"`
+	}
+
+	// 支持 JSON 和 Form 两种方式
+	if c.Request.Method == "POST" {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			if err := c.ShouldBindQuery(&req); err != nil {
+				middleware.HandleError(c, middleware.NewBusinessError(400, "参数错误: "+err.Error()))
+				return
+			}
+		}
+	} else {
+		if err := c.ShouldBindQuery(&req); err != nil {
+			middleware.HandleError(c, middleware.NewBusinessError(400, "参数错误: "+err.Error()))
+			return
+		}
+	}
+
+	// 设置默认值
+	if req.Page == 0 {
+		req.Page = 1
+	}
+	if req.PageSize == 0 {
+		req.PageSize = 10
+	}
+
+	// 获取当前用户邀请的用户总数
+	totalCount, err := repository.NewInvitationRepository().GetInvitationCountByInviter(userID)
+	if err != nil {
+		repository.Errorf("GetInvitedUsers: failed to get invitation count: %v", err)
+		middleware.HandleError(c, middleware.NewBusinessError(500, "获取邀请用户总数失败"))
+		return
+	}
+
+	// 分页获取邀请的用户（预加载被邀请人信息）
+	offset := (req.Page - 1) * req.PageSize
+	var relations []models.InvitationRelation
+	err = repository.DB.Where("inviter_id = ?", userID).
+		Preload("Invitee").
+		Offset(offset).
+		Limit(req.PageSize).
+		Order("created_at DESC").
+		Find(&relations).Error
+	if err != nil {
+		repository.Errorf("GetInvitedUsers: failed to get invitation list: %v", err)
+		middleware.HandleError(c, middleware.NewBusinessError(500, "获取邀请用户列表失败"))
+		return
+	}
+
+	// 构建邀请用户列表
+	invitedUsersList := make([]gin.H, 0, len(relations))
+	for _, relation := range relations {
+		if relation.Invitee.UserID == "" {
+			continue
+		}
+
+		inviteeID := relation.Invitee.UserID
+
+		// 从佣金记录表中聚合该被邀请用户产生的佣金数据
+		var commissionTotal float64
+		var commissionResult struct {
+			TotalAmount float64
+		}
+		err := repository.DB.Model(&models.CommissionRecord{}).
+			Select("COALESCE(SUM(amount), 0) as total_amount").
+			Where("user_id = ? AND relation_id = ?", userID, relation.ID).
+			Scan(&commissionResult).Error
+		if err == nil {
+			commissionTotal = commissionResult.TotalAmount
+		}
+
+		// 获取该被邀请用户的成功支付订单总额（排除激活码）
+		var consumptionTotal float64
+		var tradeResult struct {
+			TotalConsumption float64
+		}
+		err = repository.DB.Model(&models.Trade{}).
+			Select("COALESCE(SUM(amount), 0) as total_consumption").
+			Where("user_id = ? AND payment_status = ? AND payment_channel != ?", 
+				inviteeID, string(models.PaymentStatusSuccess), string(models.PaymentChannelActivation)).
+			Scan(&tradeResult).Error
+		if err == nil {
+			consumptionTotal = tradeResult.TotalConsumption
+		}
+
+		invitedUsersList = append(invitedUsersList, gin.H{
+			"id":               inviteeID,
+			"nickname":         relation.Invitee.Nickname,
+			"username":         relation.Invitee.Username,
+			"avatar":           relation.Invitee.Avatar,
+			"invite_time":      relation.CreatedAt.Format(time.RFC3339),
+			"total_consumption": consumptionTotal,
+			"commission":       commissionTotal,
+		})
+	}
+
+	// 统计待结算的佣金
+	var pendingCommissionResult struct {
+		Total float64
+	}
+	err = repository.DB.Model(&models.CommissionRecord{}).
+		Select("COALESCE(SUM(amount), 0) as total").
+		Where("user_id = ? AND status = ?", userID, models.CommissionPending).
+		Scan(&pendingCommissionResult).Error
+	pendingCommission := 0.0
+	if err == nil {
+		pendingCommission = pendingCommissionResult.Total
+	}
+
+	// 获取邀请当前用户的用户（预加载邀请人信息）
+	var inviterRelation models.InvitationRelation
+	err = repository.DB.Where("invitee_id = ?", userID).
+		Preload("Inviter").
+		First(&inviterRelation).Error
+	var inviterInfo interface{} = nil
+	if err == nil && inviterRelation.Inviter.UserID != "" {
+		inviterInfo = gin.H{
+			"id":         inviterRelation.Inviter.UserID,
+			"nickname":   inviterRelation.Inviter.Nickname,
+			"avatar":     inviterRelation.Inviter.Avatar,
+			"invite_time": inviterRelation.CreatedAt.Format(time.RFC3339),
+			"username":   inviterRelation.Inviter.Username,
+		}
+	}
+
+	middleware.Success(c, "获取用户邀请关系成功", gin.H{
+		"total":             totalCount,
+		"page":              req.Page,
+		"page_size":         req.PageSize,
+		"invited_users":     invitedUsersList,
+		"inviter":           inviterInfo,
+		"total_commission":  pendingCommission, // 根据Python代码，这里返回pending_commission
+		"pending_commission": pendingCommission,
+	})
+}
+
 // SetupUserRoutes 设置用户路由
 func SetupUserRoutes(r *gin.Engine, userHandler *UserHandler) {
 	// 公开路由
@@ -804,6 +950,8 @@ func SetupUserRoutes(r *gin.Engine, userHandler *UserHandler) {
 		userGroup.PUT("/parameters", userHandler.UpdateUserParameters)
 		// 获取用户会话列表 - /api/v1/user/sessions
 		userGroup.GET("/sessions", userHandler.GetUserSessions)
+		// 获取用户邀请关系和佣金信息 - /api/v1/user/get_invited_users
+		userGroup.POST("/get_invited_users", userHandler.GetInvitedUsers)
 	}
 
 	// 配置模板路由 - 放在 /api/v1/config-template 下（与Python路径一致）
