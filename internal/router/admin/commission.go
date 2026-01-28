@@ -243,6 +243,38 @@ func (h *AdminHandler) GetUserCommissionDistribution(c *gin.Context) {
 		return
 	}
 
+	// 可选：时间范围筛选（按佣金记录 created_at、邀请关系 created_at、订单 paid_at）
+	var req struct {
+		StartDate string `form:"start_date"`
+		EndDate   string `form:"end_date"`
+	}
+	if err := c.ShouldBindQuery(&req); err != nil {
+		middleware.HandleError(c, middleware.NewBusinessError(400, "参数错误: "+err.Error()))
+		return
+	}
+
+	var (
+		startTime *time.Time
+		endTime   *time.Time
+	)
+	if req.StartDate != "" {
+		if t, err := time.ParseInLocation("2006-01-02", req.StartDate, time.Local); err == nil {
+			startTime = &t
+		} else {
+			middleware.HandleError(c, middleware.NewBusinessError(400, "start_date格式错误，期望YYYY-MM-DD"))
+			return
+		}
+	}
+	if req.EndDate != "" {
+		if t, err := time.ParseInLocation("2006-01-02", req.EndDate, time.Local); err == nil {
+			t = t.Add(23*time.Hour + 59*time.Minute + 59*time.Second)
+			endTime = &t
+		} else {
+			middleware.HandleError(c, middleware.NewBusinessError(400, "end_date格式错误，期望YYYY-MM-DD"))
+			return
+		}
+	}
+
 	// 验证用户是否存在
 	var user models.User
 	if err := repository.DB.Where("user_id = ?", userID).First(&user).Error; err != nil {
@@ -271,14 +303,26 @@ func (h *AdminHandler) GetUserCommissionDistribution(c *gin.Context) {
 		var count int64
 		var totalAmount float64
 
-		repository.DB.Model(&models.CommissionRecord{}).
-			Where("user_id = ? AND status = ?", userID, int(status)).
-			Count(&count)
+		q1 := repository.DB.Model(&models.CommissionRecord{}).
+			Where("user_id = ? AND status = ?", userID, int(status))
+		if startTime != nil {
+			q1 = q1.Where("created_at >= ?", *startTime)
+		}
+		if endTime != nil {
+			q1 = q1.Where("created_at <= ?", *endTime)
+		}
+		q1.Count(&count)
 
-		repository.DB.Model(&models.CommissionRecord{}).
+		q2 := repository.DB.Model(&models.CommissionRecord{}).
 			Select("COALESCE(SUM(amount), 0)").
-			Where("user_id = ? AND status = ?", userID, int(status)).
-			Scan(&totalAmount)
+			Where("user_id = ? AND status = ?", userID, int(status))
+		if startTime != nil {
+			q2 = q2.Where("created_at >= ?", *startTime)
+		}
+		if endTime != nil {
+			q2 = q2.Where("created_at <= ?", *endTime)
+		}
+		q2.Scan(&totalAmount)
 
 		statusDistribution = append(statusDistribution, StatusDistribution{
 			Status:     int(status),
@@ -296,28 +340,65 @@ func (h *AdminHandler) GetUserCommissionDistribution(c *gin.Context) {
 	}
 
 	monthlyTrend := []MonthlyTrend{}
-	now := time.Now()
-	for i := 11; i >= 0; i-- {
-		monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location()).AddDate(0, -i, 0)
-		monthEnd := monthStart.AddDate(0, 1, 0).Add(-time.Second)
+	if startTime != nil && endTime != nil {
+		// 按传入时间范围生成月度趋势
+		cur := time.Date(startTime.Year(), startTime.Month(), 1, 0, 0, 0, 0, time.Local)
+		last := time.Date(endTime.Year(), endTime.Month(), 1, 0, 0, 0, 0, time.Local)
+		for !cur.After(last) {
+			monthStart := cur
+			monthEnd := monthStart.AddDate(0, 1, 0).Add(-time.Second)
+			if monthStart.Before(*startTime) {
+				monthStart = *startTime
+			}
+			if monthEnd.After(*endTime) {
+				monthEnd = *endTime
+			}
 
-		var count int64
-		var totalAmount float64
+			var count int64
+			var totalAmount float64
 
-		repository.DB.Model(&models.CommissionRecord{}).
-			Where("user_id = ? AND created_at >= ? AND created_at <= ?", userID, monthStart, monthEnd).
-			Count(&count)
+			repository.DB.Model(&models.CommissionRecord{}).
+				Where("user_id = ? AND created_at >= ? AND created_at <= ?", userID, monthStart, monthEnd).
+				Count(&count)
 
-		repository.DB.Model(&models.CommissionRecord{}).
-			Select("COALESCE(SUM(amount), 0)").
-			Where("user_id = ? AND created_at >= ? AND created_at <= ?", userID, monthStart, monthEnd).
-			Scan(&totalAmount)
+			repository.DB.Model(&models.CommissionRecord{}).
+				Select("COALESCE(SUM(amount), 0)").
+				Where("user_id = ? AND created_at >= ? AND created_at <= ?", userID, monthStart, monthEnd).
+				Scan(&totalAmount)
 
-		monthlyTrend = append(monthlyTrend, MonthlyTrend{
-			Month:  monthStart.Format("2006-01"),
-			Count:  count,
-			Amount: totalAmount,
-		})
+			monthlyTrend = append(monthlyTrend, MonthlyTrend{
+				Month:  cur.Format("2006-01"),
+				Count:  count,
+				Amount: totalAmount,
+			})
+
+			cur = cur.AddDate(0, 1, 0)
+		}
+	} else {
+		// 默认：最近12个月
+		now := time.Now()
+		for i := 11; i >= 0; i-- {
+			monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location()).AddDate(0, -i, 0)
+			monthEnd := monthStart.AddDate(0, 1, 0).Add(-time.Second)
+
+			var count int64
+			var totalAmount float64
+
+			repository.DB.Model(&models.CommissionRecord{}).
+				Where("user_id = ? AND created_at >= ? AND created_at <= ?", userID, monthStart, monthEnd).
+				Count(&count)
+
+			repository.DB.Model(&models.CommissionRecord{}).
+				Select("COALESCE(SUM(amount), 0)").
+				Where("user_id = ? AND created_at >= ? AND created_at <= ?", userID, monthStart, monthEnd).
+				Scan(&totalAmount)
+
+			monthlyTrend = append(monthlyTrend, MonthlyTrend{
+				Month:  monthStart.Format("2006-01"),
+				Count:  count,
+				Amount: totalAmount,
+			})
+		}
 	}
 
 	// 3. 统计该用户邀请的被邀请人的会员类型分布和付费金额（并发优化）
@@ -331,9 +412,15 @@ func (h *AdminHandler) GetUserCommissionDistribution(c *gin.Context) {
 
 	// 获取该用户所有的邀请关系（只获取被邀请人ID）
 	var inviteeIDs []string
-	if err := repository.DB.Model(&models.InvitationRelation{}).
-		Where("inviter_id = ?", userID).
-		Pluck("invitee_id", &inviteeIDs).Error; err != nil {
+	relQ := repository.DB.Model(&models.InvitationRelation{}).
+		Where("inviter_id = ?", userID)
+	if startTime != nil {
+		relQ = relQ.Where("created_at >= ?", *startTime)
+	}
+	if endTime != nil {
+		relQ = relQ.Where("created_at <= ?", *endTime)
+	}
+	if err := relQ.Pluck("invitee_id", &inviteeIDs).Error; err != nil {
 		middleware.HandleError(c, middleware.NewBusinessError(500, "查询邀请关系失败: "+err.Error()))
 		return
 	}
@@ -344,9 +431,15 @@ func (h *AdminHandler) GetUserCommissionDistribution(c *gin.Context) {
 	if len(inviteeIDs) > 0 {
 		// 批量查询所有被邀请人的成功支付订单
 		var trades []models.Trade
-		repository.DB.Select("title, amount").
-			Where("user_id IN ? AND payment_status = ?", inviteeIDs, "success").
-			Find(&trades)
+		tradeQ := repository.DB.Select("title, amount").
+			Where("user_id IN ? AND payment_status = ?", inviteeIDs, "success")
+		if startTime != nil {
+			tradeQ = tradeQ.Where("paid_at >= ?", *startTime)
+		}
+		if endTime != nil {
+			tradeQ = tradeQ.Where("paid_at <= ?", *endTime)
+		}
+		tradeQ.Find(&trades)
 
 		// 按产品名称（title）分组统计
 		for _, trade := range trades {
@@ -383,14 +476,26 @@ func (h *AdminHandler) GetUserCommissionDistribution(c *gin.Context) {
 	var totalCommissionAmount float64
 	var totalInviteeCount int64
 
-	repository.DB.Model(&models.CommissionRecord{}).
-		Where("user_id = ?", userID).
-		Count(&totalCommissionCount)
+	// 由于此处 repository.DB 直接使用，避免引入额外依赖，单独构建查询
+	commCountQ := repository.DB.Model(&models.CommissionRecord{}).Where("user_id = ?", userID)
+	if startTime != nil {
+		commCountQ = commCountQ.Where("created_at >= ?", *startTime)
+	}
+	if endTime != nil {
+		commCountQ = commCountQ.Where("created_at <= ?", *endTime)
+	}
+	commCountQ.Count(&totalCommissionCount)
 
-	repository.DB.Model(&models.CommissionRecord{}).
+	commSumQ := repository.DB.Model(&models.CommissionRecord{}).
 		Select("COALESCE(SUM(amount), 0)").
-		Where("user_id = ?", userID).
-		Scan(&totalCommissionAmount)
+		Where("user_id = ?", userID)
+	if startTime != nil {
+		commSumQ = commSumQ.Where("created_at >= ?", *startTime)
+	}
+	if endTime != nil {
+		commSumQ = commSumQ.Where("created_at <= ?", *endTime)
+	}
+	commSumQ.Scan(&totalCommissionAmount)
 
 	totalInviteeCount = int64(len(inviteeIDs))
 
@@ -424,9 +529,11 @@ func (h *AdminHandler) GetUserInviteeList(c *gin.Context) {
 
 	// 获取分页和排序参数
 	var req struct {
-		Page     int    `form:"page"`
-		PageSize int    `form:"page_size"`
-		OrderBy  string `form:"order_by"` // commission_amount, total_payment, invited_at
+		Page      int    `form:"page"`
+		PageSize  int    `form:"page_size"`
+		OrderBy   string `form:"order_by"` // commission_amount, total_payment, invited_at
+		StartDate string `form:"start_date"`
+		EndDate   string `form:"end_date"`
 	}
 	if err := c.ShouldBindQuery(&req); err != nil {
 		middleware.HandleError(c, middleware.NewBusinessError(400, "参数错误: "+err.Error()))
@@ -447,6 +554,28 @@ func (h *AdminHandler) GetUserInviteeList(c *gin.Context) {
 		req.OrderBy = "invited_at" // 默认按邀请时间排序
 	}
 
+	var (
+		startTime *time.Time
+		endTime   *time.Time
+	)
+	if req.StartDate != "" {
+		if t, err := time.ParseInLocation("2006-01-02", req.StartDate, time.Local); err == nil {
+			startTime = &t
+		} else {
+			middleware.HandleError(c, middleware.NewBusinessError(400, "start_date格式错误，期望YYYY-MM-DD"))
+			return
+		}
+	}
+	if req.EndDate != "" {
+		if t, err := time.ParseInLocation("2006-01-02", req.EndDate, time.Local); err == nil {
+			t = t.Add(23*time.Hour + 59*time.Minute + 59*time.Second)
+			endTime = &t
+		} else {
+			middleware.HandleError(c, middleware.NewBusinessError(400, "end_date格式错误，期望YYYY-MM-DD"))
+			return
+		}
+	}
+
 	// 验证用户是否存在
 	var user models.User
 	if err := repository.DB.Where("user_id = ?", userID).First(&user).Error; err != nil {
@@ -456,7 +585,14 @@ func (h *AdminHandler) GetUserInviteeList(c *gin.Context) {
 
 	// 获取该用户所有的邀请关系
 	var relations []models.InvitationRelation
-	if err := repository.DB.Where("inviter_id = ?", userID).Find(&relations).Error; err != nil {
+	relQ := repository.DB.Where("inviter_id = ?", userID)
+	if startTime != nil {
+		relQ = relQ.Where("created_at >= ?", *startTime)
+	}
+	if endTime != nil {
+		relQ = relQ.Where("created_at <= ?", *endTime)
+	}
+	if err := relQ.Find(&relations).Error; err != nil {
 		middleware.HandleError(c, middleware.NewBusinessError(500, "查询邀请关系失败: "+err.Error()))
 		return
 	}
@@ -505,9 +641,15 @@ func (h *AdminHandler) GetUserInviteeList(c *gin.Context) {
 
 	// 批量查询所有被邀请人的成功订单
 	var trades []models.Trade
-	repository.DB.Select("user_id, amount").
-		Where("user_id IN ? AND payment_status = ?", inviteeIDs, "success").
-		Find(&trades)
+	tradeQ := repository.DB.Select("user_id, amount").
+		Where("user_id IN ? AND payment_status = ?", inviteeIDs, "success")
+	if startTime != nil {
+		tradeQ = tradeQ.Where("paid_at >= ?", *startTime)
+	}
+	if endTime != nil {
+		tradeQ = tradeQ.Where("paid_at <= ?", *endTime)
+	}
+	tradeQ.Find(&trades)
 
 	// 统计每个被邀请人的订单数和付费金额
 	for _, trade := range trades {
@@ -519,9 +661,15 @@ func (h *AdminHandler) GetUserInviteeList(c *gin.Context) {
 
 	// 批量查询所有关系的佣金记录
 	var commissions []models.CommissionRecord
-	repository.DB.Select("relation_id, amount").
-		Where("user_id = ? AND relation_id IN ?", userID, relationIDs).
-		Find(&commissions)
+	commQ := repository.DB.Select("relation_id, amount").
+		Where("user_id = ? AND relation_id IN ?", userID, relationIDs)
+	if startTime != nil {
+		commQ = commQ.Where("created_at >= ?", *startTime)
+	}
+	if endTime != nil {
+		commQ = commQ.Where("created_at <= ?", *endTime)
+	}
+	commQ.Find(&commissions)
 
 	// 创建relation_id到invitee_id的映射
 	relationToInviteeMap := make(map[int]string)
@@ -565,7 +713,7 @@ func (h *AdminHandler) GetUserInviteeList(c *gin.Context) {
 				}
 			}
 		}
-	default: // invited_at
+	default: // invited_at（强制倒序，避免顺序被搞乱）
 		// 按邀请时间降序（最新的在前面）
 		for i := 0; i < len(inviteeStatsList); i++ {
 			for j := i + 1; j < len(inviteeStatsList); j++ {

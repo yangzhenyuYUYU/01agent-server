@@ -58,6 +58,10 @@ func (h *AdminHandler) GetActivationCodeList(c *gin.Context) {
 	if req.PageSize == 0 {
 		req.PageSize = 20
 	}
+	// 防御性限制，避免一次性拉取过大导致 DB 压力或响应过大
+	if req.PageSize > 1000 {
+		req.PageSize = 1000
+	}
 	if req.OrderBy == "" {
 		req.OrderBy = "created_at"
 	}
@@ -96,13 +100,24 @@ func (h *AdminHandler) GetActivationCodeList(c *gin.Context) {
 	}
 
 	// 排序
-	orderField := req.OrderBy
-	if req.OrderDir == "asc" {
-		orderField = orderField + " ASC"
-	} else {
-		orderField = orderField + " DESC"
+	// 仅允许白名单字段，避免 order_by 注入
+	allowedOrderBy := map[string]bool{
+		"id":         true,
+		"code":       true,
+		"card_type":  true,
+		"product_id": true,
+		"is_used":    true,
+		"created_at": true,
 	}
-	query = query.Order(orderField)
+	orderBy := strings.ToLower(strings.TrimSpace(req.OrderBy))
+	if !allowedOrderBy[orderBy] {
+		orderBy = "created_at"
+	}
+	orderDir := strings.ToLower(strings.TrimSpace(req.OrderDir))
+	if orderDir != "asc" {
+		orderDir = "desc"
+	}
+	query = query.Order(orderBy + " " + orderDir)
 
 	// 分页查询
 	offset := (req.Page - 1) * req.PageSize
@@ -115,10 +130,18 @@ func (h *AdminHandler) GetActivationCodeList(c *gin.Context) {
 	// 收集产品ID和用户ID，批量查询关联数据
 	productIDs := make([]int, 0)
 	userIDs := make([]string, 0)
+	productIDSet := make(map[int]struct{})
+	userIDSet := make(map[string]struct{})
 	for _, code := range activationCodes {
-		productIDs = append(productIDs, code.ProductID)
+		if _, ok := productIDSet[code.ProductID]; !ok {
+			productIDs = append(productIDs, code.ProductID)
+			productIDSet[code.ProductID] = struct{}{}
+		}
 		if code.UsedByID != nil {
-			userIDs = append(userIDs, *code.UsedByID)
+			if _, ok := userIDSet[*code.UsedByID]; !ok {
+				userIDs = append(userIDs, *code.UsedByID)
+				userIDSet[*code.UsedByID] = struct{}{}
+			}
 		}
 	}
 
