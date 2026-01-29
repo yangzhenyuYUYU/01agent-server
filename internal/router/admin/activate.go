@@ -246,14 +246,14 @@ func (h *AdminHandler) CreateActivationCodes(c *gin.Context) {
 	}
 
 	// 验证卡片类型
-	if req.CardType != string(models.CardTypeMembership) && req.CardType != string(models.CardTypeCredits) {
+	if req.CardType != string(models.CardTypeMembership) && req.CardType != string(models.CardTypeCredits) && req.CardType != string(models.CardTypeCreditsTemp) {
 		middleware.HandleError(c, middleware.NewBusinessError(400, "无效的卡片类型"))
 		return
 	}
 
 	// 验证产品是否存在
 	var productName *string
-	if req.CardType == string(models.CardTypeMembership) {
+	if req.CardType == string(models.CardTypeMembership) || req.CardType == string(models.CardTypeCreditsTemp) {
 		var product models.Production
 		if err := repository.DB.Where("id = ?", req.ProductID).First(&product).Error; err != nil {
 			if err == gorm.ErrRecordNotFound {
